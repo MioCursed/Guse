@@ -4,7 +4,14 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc && node -e \"require('node:fs').cpSync('src/web/public', 'dist/web/public', { recursive: true })\"",
+    "start": "node dist/index.js",
+    "deploy:commands": "npm run build && node dist/bot/deploy-commands.js",
+    "screen:redirect": "node scripts/create-screen-redirect.js",
+    "test": "npm run build && node --test tests/server.test.js",
+    "test:e2e": "npm run build && playwright test",
+    "test:lighthouse": "npm run build && playwright test --project=lighthouse",
+    "test:e2e:headed": "npm run build && playwright test --headed"
   },
   "keywords": [],
   "author": "",
@@ -15,13 +22,19 @@
     "discord.js": "^14.27.0",
     "dotenv": "^18.0.9",
     "express": "^5.3.0",
+    "qrcode": "^1.5.4",
     "socket.io": "^4.8.4",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.64.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
+    "@types/qrcode": "^1.5.6",
+    "lighthouse": "^13.6.0",
+    "socket.io-client": "^4.8.4",
     "typescript": "^7.0.2"
   }
 }
