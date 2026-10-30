@@ -97,11 +97,14 @@ test('room endpoints issue protected ICE credentials, QR and session metadata', 
         headers: { Cookie: cookie }
     });
     assert.equal(sessionResponse.status, 200);
-    assert.deepEqual(await sessionResponse.json(), {
-        viewerId: ownerId,
-        isOwner: true,
-        captureProtectionEnabled: true
+    const roomSession = await sessionResponse.json();
+    assert.equal(roomSession.viewerId, ownerId);
+    assert.deepEqual(roomSession.profile, {
+        userId: ownerId,
+        displayName: `Discord · ${ownerId}`
     });
+    assert.equal(roomSession.isOwner, true);
+    assert.equal(roomSession.captureProtectionEnabled, true);
 
     const qrResponse = await fetch(`${baseUrl}/api/rooms/${roomId}/qr`);
     assert.equal(qrResponse.status, 200);
@@ -122,6 +125,33 @@ test('room endpoints issue protected ICE credentials, QR and session metadata', 
     const homeResponse = await fetch(baseUrl);
     assert.equal(homeResponse.status, 200);
     assert.match(await homeResponse.text(), /Inicie pelo Discord/);
+});
+
+test('Discord invite sending requires the room owner and a same-origin request', async () => {
+    const originDenied = await fetch(`${baseUrl}/api/rooms/${roomId}/invite`, {
+        method: 'POST',
+        headers: { Cookie: sessionCookie(ownerId) }
+    });
+    assert.equal(originDenied.status, 403);
+
+    const viewerDenied = await fetch(`${baseUrl}/api/rooms/${roomId}/invite`, {
+        method: 'POST',
+        headers: {
+            Cookie: sessionCookie(viewerId),
+            Origin: process.env.PUBLIC_URL
+        }
+    });
+    assert.equal(viewerDenied.status, 403);
+
+    const botUnavailable = await fetch(`${baseUrl}/api/rooms/${roomId}/invite`, {
+        method: 'POST',
+        headers: {
+            Cookie: sessionCookie(ownerId),
+            Origin: process.env.PUBLIC_URL
+        }
+    });
+    assert.equal(botUnavailable.status, 503);
+    assert.match((await botUnavailable.json()).error, /bot do Discord está offline/);
 });
 
 test('one-time access tickets are consumed and expire from reuse', async () => {
@@ -158,7 +188,11 @@ test('room signaling enforces guild membership and owner-only protection control
     const [viewerRoom] = await viewerJoined;
     assert.equal(viewerRoom.isOwner, false);
     assert.deepEqual(viewerRoom.users, [owner.id]);
-    assert.deepEqual(await ownerSawViewer, [viewer.id]);
+    assert.deepEqual(await ownerSawViewer, [{
+        socketId: viewer.id,
+        userId: viewerId,
+        displayName: `Discord · ${viewerId}`
+    }]);
 
     const rejected = waitForEvent(outsiders, 'authorization-required');
     outsiders.emit('join-room', roomId);

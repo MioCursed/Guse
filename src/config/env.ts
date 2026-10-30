@@ -6,6 +6,7 @@ dotenv.config();
 const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1, "Discord Token is required"),
   CLIENT_ID: z.string().min(1, "Client ID is required"),
+  DISCORD_INVITE_CHANNEL_ID: z.string().regex(/^\d{17,20}$/, "Discord invite channel ID must be a snowflake").default("1484265142320365638"),
   DISCORD_CLIENT_SECRET: z.preprocess(
     value => value === '' ? undefined : value,
     z.string().min(1, "Discord OAuth client secret cannot be empty").optional()

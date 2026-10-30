@@ -5,7 +5,9 @@ import path from 'path';
 import crypto from 'crypto';
 import cors from 'cors';
 import QRCode from 'qrcode';
+import { EmbedBuilder } from 'discord.js';
 import { env } from '../config/env';
+import { client } from '../bot/client';
 import { screenSessionStore } from '../bot/state/screenSessionStore';
 import { createSessionToken, readCookie, readSessionToken } from './discordAuth';
 
@@ -24,8 +26,51 @@ const discordAccessTickets = new Map<string, {
     expiresAt: number;
 }>();
 const discordAccessTicketLifetimeMs = 5 * 60 * 1000;
+const inviteCooldowns = new Map<string, number>();
+type DiscordProfile = { userId: string; displayName: string; avatarUrl?: string };
+const discordProfiles = new Map<string, Promise<DiscordProfile>>();
 const stunUrls = env.STUN_URLS.split(',').map(url => url.trim()).filter(Boolean);
 const turnUrls = env.TURN_URLS.split(',').map(url => url.trim()).filter(Boolean);
+
+function getDiscordProfile(userId: string): Promise<DiscordProfile> {
+    const cached = discordProfiles.get(userId);
+    if (cached) {
+        return cached;
+    }
+
+    const profileRequest = (async (): Promise<DiscordProfile> => {
+        if (!client.isReady()) {
+            return { userId, displayName: `Discord · ${userId}` };
+        }
+        try {
+            const user = await client.users.fetch(userId);
+            return {
+                userId,
+                displayName: user.globalName || user.username,
+                avatarUrl: user.displayAvatarURL({ size: 64 })
+            };
+        } catch (error) {
+            console.warn(`Could not load Discord profile ${userId}:`, error);
+            return { userId, displayName: `Discord · ${userId}` };
+        }
+    })();
+    discordProfiles.set(userId, profileRequest);
+    profileRequest.then(profile => {
+        if (profile.displayName === `Discord · ${userId}`) {
+            discordProfiles.delete(userId);
+        }
+    });
+    return profileRequest;
+}
+
+async function getSocketIdentity(socketId: string) {
+    const socket = io.sockets.sockets.get(socketId);
+    const userId = socket?.data.discordUserId;
+    if (typeof userId !== 'string') {
+        return { socketId, userId: '', displayName: 'Participante' };
+    }
+    return { socketId, ...await getDiscordProfile(userId) };
+}
 function getDiscordAuthConfig() {
     if (!env.DISCORD_CLIENT_SECRET) {
         return undefined;
@@ -107,7 +152,7 @@ app.get('/api/rooms/:roomId/ice', (req, res) => {
     res.json({ iceServers });
 });
 
-app.get('/api/rooms/:roomId/session', (req, res) => {
+app.get('/api/rooms/:roomId/session', async (req, res) => {
     const room = screenSessionStore.getByRoomId(req.params.roomId);
     const session = readSessionToken(readCookie(req.headers.cookie, sessionCookieName), env.SESSION_SECRET);
     if (!room || !session || session.guildId !== room.guildId) {
@@ -118,9 +163,64 @@ app.get('/api/rooms/:roomId/session', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json({
         viewerId: session.userId,
+        profile: await getDiscordProfile(session.userId),
         isOwner: room.ownerId === session.userId,
         captureProtectionEnabled: room.captureProtectionEnabled ?? true
     });
+});
+
+app.post('/api/rooms/:roomId/invite', async (req, res) => {
+    if (!allowedOrigins.includes(req.get('origin') ?? '')) {
+        res.sendStatus(403);
+        return;
+    }
+
+    const room = screenSessionStore.getByRoomId(req.params.roomId);
+    const session = readSessionToken(readCookie(req.headers.cookie, sessionCookieName), env.SESSION_SECRET);
+    if (!room || !session || session.guildId !== room.guildId || session.userId !== room.ownerId) {
+        res.sendStatus(403);
+        return;
+    }
+    if (!client.isReady()) {
+        res.status(503).json({ error: 'O bot do Discord está offline no momento.' });
+        return;
+    }
+
+    const cooldownKey = `${room.roomId}:${session.userId}`;
+    const nextAllowedAt = inviteCooldowns.get(cooldownKey) ?? 0;
+    if (nextAllowedAt > Date.now()) {
+        res.status(429).json({ error: 'Aguarde um pouco antes de enviar outro convite.' });
+        return;
+    }
+
+    try {
+        const channel = await client.channels.fetch(env.DISCORD_INVITE_CHANNEL_ID);
+        if (!channel || !channel.isTextBased() || !('guildId' in channel)) {
+            res.status(503).json({ error: 'O canal de convites não está disponível.' });
+            return;
+        }
+        if (channel.guildId !== room.guildId) {
+            res.status(403).json({ error: 'O canal de convites não pertence a este servidor.' });
+            return;
+        }
+
+        const profile = await getDiscordProfile(session.userId);
+        const inviteUrl = `${screenBaseUrl}/s/${encodeURIComponent(room.roomId)}`;
+        const embed = new EmbedBuilder()
+            .setColor(0x5865f2)
+            .setTitle('Convite para assistir junto')
+            .setDescription(`[Entrar na sala](${inviteUrl})`)
+            .addFields({ name: 'Enviado por', value: profile.displayName, inline: true })
+            .setFooter({ text: 'Guse Screen · Entre com sua conta Discord' })
+            .setTimestamp();
+
+        await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+        inviteCooldowns.set(cooldownKey, Date.now() + 30_000);
+        res.json({ sent: true });
+    } catch (error) {
+        console.error('Não foi possível enviar o convite para o Discord:', error);
+        res.status(502).json({ error: 'O bot não conseguiu enviar o convite. Confira se ele pode falar no canal.' });
+    }
 });
 
 app.get('/api/rooms/:roomId/qr', async (req, res, next) => {
@@ -374,6 +474,11 @@ const activeSharers = new Map<string, Set<string>>();
 
 export function endScreenRoom(roomId: string) {
     activeSharers.delete(roomId);
+    for (const key of inviteCooldowns.keys()) {
+        if (key.startsWith(`${roomId}:`)) {
+            inviteCooldowns.delete(key);
+        }
+    }
     io.to(roomId).emit('screen-session-ended');
     io.in(roomId).socketsLeave(roomId);
 }
@@ -396,7 +501,7 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
     console.log(`Socket connected: ${socket.id}`);
 
-    socket.on('join-room', (roomId) => {
+    socket.on('join-room', async (roomId) => {
         const room = typeof roomId === 'string' ? screenSessionStore.getByRoomId(roomId) : undefined;
         if (!room || socket.data.roomId === roomId) {
             socket.emit('room-not-found');
@@ -419,18 +524,20 @@ io.on('connection', (socket) => {
             .filter(userId => userId !== socket.id);
         socket.join(roomId);
         socket.data.roomId = roomId;
+        const participants = await Promise.all(existingUsers.map(getSocketIdentity));
         socket.emit('room-users', {
             users: existingUsers,
+            participants,
             sharingUserIds: Array.from(activeSharers.get(roomId) ?? []),
             isOwner: room.ownerId === socket.data.discordUserId,
             captureProtectionEnabled: room.captureProtectionEnabled ?? true
         });
-        socket.to(roomId).emit('user-connected', socket.id);
+        socket.to(roomId).emit('user-connected', await getSocketIdentity(socket.id));
 
         console.log(`Socket ${socket.id} joined room ${roomId}`);
     });
 
-    socket.on('request-room-users', () => {
+    socket.on('request-room-users', async () => {
         const roomId = socket.data.roomId as string | undefined;
         const room = roomId ? screenSessionStore.getByRoomId(roomId) : undefined;
         if (!roomId || !room) {
@@ -439,8 +546,10 @@ io.on('connection', (socket) => {
 
         const users = Array.from(io.sockets.adapter.rooms.get(roomId) ?? [])
             .filter(userId => userId !== socket.id);
+        const participants = await Promise.all(users.map(getSocketIdentity));
         socket.emit('room-users', {
             users,
+            participants,
             sharingUserIds: Array.from(activeSharers.get(roomId) ?? []),
             isOwner: room.ownerId === socket.data.discordUserId,
             captureProtectionEnabled: room.captureProtectionEnabled ?? true
