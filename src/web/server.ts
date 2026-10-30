@@ -171,14 +171,18 @@ app.get('/api/rooms/:roomId/session', async (req, res) => {
 
 app.post('/api/rooms/:roomId/invite', async (req, res) => {
     if (!allowedOrigins.includes(req.get('origin') ?? '')) {
-        res.sendStatus(403);
+        res.status(403).json({ error: 'Esta página não tem permissão para enviar o convite. Recarregue a sala pelo link oficial.' });
         return;
     }
 
     const room = screenSessionStore.getByRoomId(req.params.roomId);
     const session = readSessionToken(readCookie(req.headers.cookie, sessionCookieName), env.SESSION_SECRET);
-    if (!room || !session || session.guildId !== room.guildId || session.userId !== room.ownerId) {
-        res.sendStatus(403);
+    if (!room || !session || session.guildId !== room.guildId) {
+        res.status(403).json({ error: 'Sua sessão ou sala expirou. Volte ao Discord e abra a sala pelo convite mais recente.' });
+        return;
+    }
+    if (session.userId !== room.ownerId) {
+        res.status(403).json({ error: 'Somente quem criou a sala pode enviar o convite.' });
         return;
     }
     if (!client.isReady()) {

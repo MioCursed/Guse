@@ -899,7 +899,10 @@ async function sendDiscordInvite() {
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(result.error || 'Não foi possível enviar o convite para o Discord.');
+            const fallback = response.status === 403
+                ? 'Sua sessão ou sala expirou. Volte ao Discord e abra a sala pelo convite mais recente.'
+                : `Não foi possível enviar o convite (erro ${response.status}). Tente novamente.`;
+            throw new Error(result.error || fallback);
         }
         setStatus('Convite enviado no canal do Discord.');
     } catch (error) {

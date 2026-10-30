@@ -136,6 +136,7 @@ test('Discord invite sending requires the room owner and a same-origin request',
         headers: { Cookie: sessionCookie(ownerId) }
     });
     assert.equal(originDenied.status, 403);
+    assert.match((await originDenied.json()).error, /Recarregue a sala/);
 
     const viewerDenied = await fetch(`${baseUrl}/api/rooms/${roomId}/invite`, {
         method: 'POST',
@@ -145,6 +146,7 @@ test('Discord invite sending requires the room owner and a same-origin request',
         }
     });
     assert.equal(viewerDenied.status, 403);
+    assert.match((await viewerDenied.json()).error, /Somente quem criou/);
 
     const botUnavailable = await fetch(`${baseUrl}/api/rooms/${roomId}/invite`, {
         method: 'POST',
