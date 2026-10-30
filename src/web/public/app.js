@@ -1,202 +1,1148 @@
 const socket = io('/');
 const videoGrid = document.getElementById('video-grid');
+const statusMessage = document.getElementById('status-message');
+const welcome = document.getElementById('welcome');
+const participantCount = document.getElementById('participant-count');
+const viewerTotal = document.getElementById('viewer-total');
+const viewerList = document.getElementById('viewer-list');
+const connectionIndicator = document.getElementById('connection-indicator');
+const networkStatus = document.getElementById('network-status');
 const ROOM_ID = window.location.pathname.split('/').pop();
-const USER_ID = Math.random().toString(36).substring(7);
 
-const myVideo = document.createElement('video');
-myVideo.muted = true;
-const peers = {};
+const peers = new Map();
+const pendingCandidatesByConnection = new Map();
+const retryAttempts = new Map();
+const retryTimers = new Map();
+const maxPeerRetries = 4;
+const iceConfigurationReady = loadIceConfiguration();
 
-const iceServers = {
-    iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-    ]
-};
-
+let iceConfiguration;
+let iceConfigurationError;
 let localStream = null;
+let sessionEnded = false;
+let screenPaused = false;
+let roomIsOwner = false;
+let captureProtectionEnabled = true;
+let audioEnabled = false;
+let activePipWindow = null;
+let activeSharerIds = new Set();
+let participantIds = new Set();
+let viewerId = '';
+let pingMs;
+let packetLossPercent;
 
 const shareBtn = document.getElementById('share-btn');
 const stopShareBtn = document.getElementById('stop-share-btn');
+const pauseShareBtn = document.getElementById('pause-share-btn');
+const audioBtn = document.getElementById('audio-btn');
+const inviteBtn = document.getElementById('invite-btn');
+const copyLinkBtn = document.getElementById('copy-link-btn');
+const welcomeShareBtn = document.getElementById('welcome-share-btn');
+const sourceSelect = document.getElementById('source-select');
+const qualitySelect = document.getElementById('quality-select');
+const systemAudioInput = document.getElementById('system-audio');
+const systemAudioOption = document.getElementById('system-audio-option');
+const captureDeviceSelect = document.getElementById('capture-device-select');
+const captureDeviceLabel = document.getElementById('capture-device-label');
+const detectCaptureButton = document.getElementById('detect-capture-btn');
+const protectionToggle = document.getElementById('protection-toggle');
+const protectionSetting = document.getElementById('protection-setting');
+const captureWatermark = document.getElementById('capture-watermark');
+const captureBlurNotice = document.getElementById('capture-blur-notice');
+const helpDialog = document.getElementById('help-dialog');
+const canShareScreen = window.isSecureContext && Boolean(navigator.mediaDevices?.getDisplayMedia);
+const canCaptureVideoDevice = Boolean(navigator.mediaDevices?.getUserMedia && navigator.mediaDevices?.enumerateDevices);
 
-shareBtn.addEventListener('click', async () => {
-    try {
-        localStream = await navigator.mediaDevices.getDisplayMedia({
-            video: { cursor: "always", frameRate: 30 },
-            audio: true
-        });
-        
-        addVideoStream(myVideo, localStream);
-        shareBtn.style.display = 'none';
-        stopShareBtn.style.display = 'inline-block';
+document.getElementById('room-short-id').textContent = ROOM_ID.slice(0, 8);
+document.getElementById('room-qr-image').src = `/api/rooms/${encodeURIComponent(ROOM_ID)}/qr`;
+shareBtn.disabled = !canShareScreen;
+welcomeShareBtn.disabled = !canShareScreen;
 
-        socket.emit('join-room', ROOM_ID, USER_ID);
-        
-        localStream.getVideoTracks()[0].onended = () => {
-            stopSharing();
-        };
+if (new URLSearchParams(window.location.search).has('popup')) {
+    document.body.classList.add('popup-mode');
+}
 
-    } catch (err) {
-        console.error("Error accessing display media.", err);
-    }
+if (!canShareScreen) {
+    document.getElementById('sharing-guidance').textContent =
+        'Este navegador pode assistir. Para transmitir pelo celular, use o app Discord; no PC, tente um navegador compatível.';
+}
+if (!canCaptureVideoDevice) {
+    sourceSelect.querySelector('option[value="capture"]').disabled = true;
+}
+
+loadTheme();
+loadRoomSession();
+updateCaptureCapabilities();
+updateCaptureGuard();
+startNetworkStats();
+
+socket.on('connect', () => {
+    socket.emit('join-room', ROOM_ID);
+    connectionIndicator.dataset.state = 'connected';
+    connectionIndicator.querySelector('span:last-child').textContent = 'Conectado';
+    shareBtn.disabled = sessionEnded || (!canShareScreen && sourceSelect.value !== 'capture');
+    setStatus('Entrando na sala...');
 });
 
-stopShareBtn.addEventListener('click', stopSharing);
+socket.on('disconnect', () => {
+    connectionIndicator.dataset.state = 'connecting';
+    connectionIndicator.querySelector('span:last-child').textContent = 'Reconectando...';
+    participantIds.clear();
+    activeSharerIds.clear();
+    closeAllPeers();
+    updateRoomUi();
+    setStatus('Conexão perdida. Tentando reconectar à sala...');
+});
 
-function stopSharing() {
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-        myVideo.remove();
-        shareBtn.style.display = 'inline-block';
-        stopShareBtn.style.display = 'none';
-        socket.emit('stop-sharing', USER_ID);
-        
-        // Disconnect all peers when I stop sharing
-        for(let peer in peers) {
-             peers[peer].close();
-             delete peers[peer];
-        }
+socket.on('connect_error', error => {
+    console.error('Não foi possível conectar à sala:', error);
+    if (error.message === 'authentication_required') {
+        window.location.assign(`/auth/discord?roomId=${encodeURIComponent(ROOM_ID)}`);
+        return;
     }
-}
+    setStatus('Não foi possível conectar. Verifique a rede e tente atualizar a página.');
+});
+
+socket.on('authorization-required', () => {
+    window.location.assign(`/auth/discord?roomId=${encodeURIComponent(ROOM_ID)}`);
+});
+
+socket.on('room-not-found', () => {
+    sessionEnded = true;
+    updateRoomUi();
+    setStatus('Esta sala não existe mais ou já foi encerrada.');
+});
+
+socket.on('room-users', async ({ users, sharingUserIds, isOwner, captureProtectionEnabled: roomProtection }) => {
+    activeSharerIds = new Set(sharingUserIds);
+    participantIds = new Set(users);
+    roomIsOwner = Boolean(isOwner);
+    captureProtectionEnabled = Boolean(roomProtection);
+    protectionSetting.hidden = !roomIsOwner;
+    protectionToggle.checked = captureProtectionEnabled;
+    updateCaptureGuard();
+    renderViewerList();
+
+    if (localStream) {
+        await registerCurrentShare();
+        users.forEach(connectToViewer);
+    } else {
+        sharingUserIds.forEach(userId => socket.emit('request-screen', userId));
+        updateRoomStatus();
+    }
+});
 
 socket.on('user-connected', userId => {
-    console.log('User connected: ' + userId);
-    if(localStream) {
-        connectToNewUser(userId, localStream);
+    participantIds.add(userId);
+    updateRoomUi();
+    if (localStream) {
+        connectToViewer(userId);
     }
 });
 
-socket.on('offer', async (data) => {
-    const peerConnection = new RTCPeerConnection(iceServers);
-    peers[data.from] = peerConnection;
-
-    const video = document.createElement('video');
-    
-    peerConnection.ontrack = event => {
-        addVideoStream(video, event.streams[0]);
-    };
-
-    peerConnection.onicecandidate = event => {
-        if (event.candidate) {
-            socket.emit('ice-candidate', {
-                target: data.from,
-                candidate: event.candidate,
-                from: USER_ID
-            });
-        }
-    };
-    
-    // Cleanup if connection closes
-    peerConnection.oniceconnectionstatechange = () => {
-        if (peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'closed') {
-             video.remove();
-             if(peers[data.from]) delete peers[data.from];
-        }
+socket.on('screen-started', userId => {
+    activeSharerIds.add(userId);
+    updateRoomUi();
+    if (userId === socket.id) {
+        return;
     }
-
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-
-    socket.emit('answer', {
-        target: data.from,
-        answer: answer,
-        from: USER_ID
-    });
-});
-
-socket.on('answer', async (data) => {
-    const peerConnection = peers[data.from];
-    if (peerConnection) {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+    if (localStream) {
+        connectToViewer(userId);
+    } else {
+        socket.emit('request-screen', userId);
     }
 });
 
-socket.on('ice-candidate', async (data) => {
-    const peerConnection = peers[data.from];
-    if (peerConnection) {
-        try {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (e) {
-            console.error('Error adding received ice candidate', e);
-        }
+socket.on('request-screen', ({ from }) => {
+    if (localStream && typeof from === 'string') {
+        connectToViewer(from);
     }
 });
 
-socket.on('user-disconnected', userId => {
-    if (peers[userId]) {
-        peers[userId].close();
-        delete peers[userId];
-        // Note: Removing the video element is tricky without managing mapping of userId to element.
-        // The oniceconnectionstatechange usually handles it.
+socket.on('offer', async ({ from, connectionId, offer }) => {
+    if (typeof connectionId !== 'string' || typeof from !== 'string' || !offer) {
+        return;
+    }
+
+    try {
+        await iceConfigurationReady;
+        if (!iceConfiguration) {
+            throw iceConfigurationError || new Error('Configuração ICE indisponível.');
+        }
+        const earlyCandidates = pendingCandidatesByConnection.get(connectionId);
+        closePeer(connectionId);
+        if (earlyCandidates?.length) {
+            pendingCandidatesByConnection.set(connectionId, earlyCandidates);
+        }
+        const peer = createPeer(connectionId, from, false);
+        await peer.connection.setRemoteDescription(offer);
+        await addQueuedCandidates(peer, connectionId);
+        const answer = await peer.connection.createAnswer();
+        await peer.connection.setLocalDescription(answer);
+        socket.emit('answer', { target: from, connectionId, answer: peer.connection.localDescription });
+    } catch (error) {
+        console.error('Não foi possível receber a transmissão:', error);
+        setStatus('Falha ao conectar a transmissão. Se persistir, verifique STUN/TURN e tente novamente.');
     }
 });
 
-socket.on('user-stopped-sharing', userId => {
-    if(peers[userId]) {
-        peers[userId].close();
-        delete peers[userId];
+socket.on('answer', async ({ connectionId, answer }) => {
+    const peer = peers.get(connectionId);
+    if (!peer) {
+        return;
     }
-    // Simplistic approach: remove all videos except my own.
-    // In a real app, map elements to user IDs.
-    Array.from(videoGrid.children).forEach(child => {
-        if(child !== myVideo) {
-            child.remove();
-        }
-    })
+
+    try {
+        await peer.connection.setRemoteDescription(answer);
+        await addQueuedCandidates(peer, connectionId);
+    } catch (error) {
+        console.error('Não foi possível completar a conexão da transmissão:', error);
+        closePeer(connectionId);
+    }
 });
 
-function connectToNewUser(userId, stream) {
-    const peerConnection = new RTCPeerConnection(iceServers);
-    peers[userId] = peerConnection;
-
-    stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
-
-    const video = document.createElement('video');
-    peerConnection.ontrack = event => {
-        addVideoStream(video, event.streams[0]);
-    };
-
-    peerConnection.onicecandidate = event => {
-        if (event.candidate) {
-            socket.emit('ice-candidate', {
-                target: userId,
-                candidate: event.candidate,
-                from: USER_ID
-            });
+socket.on('ice-candidate', async ({ connectionId, candidate }) => {
+    if (typeof connectionId !== 'string' || !candidate) {
+        return;
+    }
+    const peer = peers.get(connectionId);
+    if (!peer) {
+        const pending = pendingCandidatesByConnection.get(connectionId) ?? [];
+        if (pending.length < 64) {
+            pending.push(candidate);
+            pendingCandidatesByConnection.set(connectionId, pending);
         }
-    };
-    
-    peerConnection.oniceconnectionstatechange = () => {
-        if (peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'closed') {
-             video.remove();
-             if(peers[userId]) delete peers[userId];
-        }
+        return;
     }
 
-    peerConnection.createOffer().then(offer => {
-        return peerConnection.setLocalDescription(offer);
-    }).then(() => {
-        socket.emit('offer', {
-            target: userId,
-            offer: peerConnection.localDescription,
-            from: USER_ID
+    if (!peer.connection.remoteDescription) {
+        if (peer.pendingCandidates.length < 64) {
+            peer.pendingCandidates.push(candidate);
+        }
+        return;
+    }
+
+    try {
+        await peer.connection.addIceCandidate(candidate);
+    } catch (error) {
+        console.error('Não foi possível adicionar um candidato ICE:', error);
+    }
+});
+
+socket.on('screen-paused', userId => {
+    const peer = findPeerFor(userId);
+    if (!peer) {
+        return;
+    }
+    setPausedLabel(peer.video, true);
+});
+
+socket.on('screen-resumed', userId => {
+    const peer = findPeerFor(userId);
+    if (!peer) {
+        return;
+    }
+    setPausedLabel(peer.video, false);
+});
+
+socket.on('screen-stopped', handleScreenStopped);
+socket.on('user-disconnected', handleUserDisconnected);
+socket.on('screen-session-ended', () => {
+    sessionEnded = true;
+    activeSharerIds.clear();
+    stopSharing(false);
+    closeAllPeers();
+    updateRoomUi();
+    setStatus('Esta sala foi encerrada pelo criador.');
+});
+
+socket.on('capture-protection-changed', enabled => {
+    captureProtectionEnabled = Boolean(enabled);
+    protectionToggle.checked = captureProtectionEnabled;
+    updateCaptureGuard();
+});
+
+socket.on('capture-protection-error', message => {
+    protectionToggle.checked = captureProtectionEnabled;
+    setStatus(message);
+});
+
+socket.on('latency-result', sentAt => {
+    if (typeof sentAt !== 'number') {
+        return;
+    }
+    pingMs = Math.max(0, Math.round(performance.now() - sentAt));
+    updateNetworkStatus();
+});
+
+shareBtn.addEventListener('click', startSharing);
+welcomeShareBtn.addEventListener('click', startSharing);
+stopShareBtn.addEventListener('click', () => stopSharing());
+pauseShareBtn.addEventListener('click', togglePause);
+audioBtn.addEventListener('click', toggleRoomAudio);
+inviteBtn.addEventListener('click', shareInvite);
+copyLinkBtn.addEventListener('click', copyInvite);
+sourceSelect.addEventListener('change', updateCaptureCapabilities);
+detectCaptureButton.addEventListener('click', discoverVideoDevices);
+captureDeviceSelect.addEventListener('change', updateCaptureCapabilities);
+protectionToggle.addEventListener('change', () => {
+    socket.emit('set-capture-protection', protectionToggle.checked);
+});
+document.getElementById('theme-btn').addEventListener('click', toggleTheme);
+document.getElementById('help-btn').addEventListener('click', () => helpDialog.showModal());
+document.getElementById('close-help-btn').addEventListener('click', () => helpDialog.close());
+document.getElementById('fullscreen-btn').addEventListener('click', toggleFullscreen);
+document.getElementById('pip-btn').addEventListener('click', openPictureInPicture);
+document.getElementById('leave-btn').addEventListener('click', leaveRoom);
+document.addEventListener('contextmenu', event => {
+    if (captureProtectionEnabled && event.target.closest('.screen-card')) {
+        event.preventDefault();
+    }
+});
+document.addEventListener('visibilitychange', updateCaptureGuard);
+window.addEventListener('blur', updateCaptureGuard);
+window.addEventListener('focus', updateCaptureGuard);
+document.addEventListener('keydown', handleKeyboardShortcuts);
+
+async function loadIceConfiguration() {
+    try {
+        const response = await fetch(`/api/rooms/${encodeURIComponent(ROOM_ID)}/ice`, {
+            credentials: 'same-origin',
+            cache: 'no-store'
         });
-    });
+        if (!response.ok) {
+            throw new Error(`ICE config request failed with status ${response.status}`);
+        }
+        const data = await response.json();
+        if (!Array.isArray(data.iceServers)) {
+            throw new Error('ICE config response has no iceServers array.');
+        }
+        iceConfiguration = { iceServers: data.iceServers };
+    } catch (error) {
+        iceConfigurationError = error;
+        console.error('Não foi possível carregar a configuração ICE:', error);
+        setStatus('Não foi possível carregar STUN/TURN. Atualize a sala ou contate o responsável.');
+    }
 }
 
-function addVideoStream(video, stream) {
-    video.srcObject = stream;
-    video.addEventListener('loadedmetadata', () => {
-        video.play();
-    });
-    // Check if video is already in grid
-    let exists = false;
-    Array.from(videoGrid.children).forEach(child => {
-       if (child.srcObject === stream) exists = true;
-    });
-    
-    if(!exists){
-        videoGrid.append(video);
+async function loadRoomSession() {
+    try {
+        const response = await fetch(`/api/rooms/${encodeURIComponent(ROOM_ID)}/session`, {
+            credentials: 'same-origin',
+            cache: 'no-store'
+        });
+        if (!response.ok) {
+            throw new Error(`Room session request failed with status ${response.status}`);
+        }
+        const data = await response.json();
+        viewerId = data.viewerId;
+        captureProtectionEnabled = Boolean(data.captureProtectionEnabled);
+        roomIsOwner = Boolean(data.isOwner);
+        protectionSetting.hidden = !roomIsOwner;
+        protectionToggle.checked = captureProtectionEnabled;
+        updateWatermark();
+        updateCaptureGuard();
+    } catch (error) {
+        console.error('Não foi possível carregar as informações da sala:', error);
+        setStatus('Não foi possível validar sua sessão. Recarregue o link da sala.');
     }
+}
+
+function updateCaptureCapabilities() {
+    const usingCaptureDevice = sourceSelect.value === 'capture';
+    const hasSelectedDevice = Boolean(captureDeviceSelect.value);
+    const canShareCurrentSource = usingCaptureDevice
+        ? canCaptureVideoDevice && hasSelectedDevice
+        : canShareScreen;
+    shareBtn.disabled = sessionEnded || !canShareCurrentSource || !socket.connected;
+    welcomeShareBtn.disabled = shareBtn.disabled;
+    systemAudioInput.disabled = usingCaptureDevice;
+    systemAudioOption.hidden = usingCaptureDevice || !canShareScreen;
+    captureDeviceSelect.hidden = !usingCaptureDevice;
+    captureDeviceLabel.hidden = !usingCaptureDevice;
+    detectCaptureButton.hidden = !usingCaptureDevice;
+    if (usingCaptureDevice && !hasSelectedDevice) {
+        setStatus('Detecte e escolha uma placa de captura ou câmera antes de iniciar.');
+    } else if (!canShareScreen && !usingCaptureDevice) {
+        setStatus('Este dispositivo pode assistir. Para transmitir pelo celular, use o app Discord.');
+    } else {
+        updateRoomStatus();
+    }
+}
+
+async function discoverVideoDevices() {
+    if (!canCaptureVideoDevice) {
+        setStatus('Este navegador não permite selecionar dispositivos de vídeo.');
+        return;
+    }
+
+    detectCaptureButton.disabled = true;
+    try {
+        const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        permissionStream.getTracks().forEach(track => track.stop());
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        captureDeviceSelect.replaceChildren();
+        for (const [index, device] of videoDevices.entries()) {
+            const option = document.createElement('option');
+            option.value = device.deviceId;
+            option.textContent = device.label || `Dispositivo de vídeo ${index + 1}`;
+            captureDeviceSelect.append(option);
+        }
+        if (videoDevices.length === 0) {
+            setStatus('Nenhuma placa de captura ou câmera foi encontrada.');
+        } else {
+            setStatus(`${videoDevices.length} dispositivo(s) de vídeo encontrado(s).`);
+        }
+        updateCaptureCapabilities();
+    } catch (error) {
+        console.error('Não foi possível listar dispositivos de vídeo:', error);
+        setStatus('Permita o acesso à câmera para detectar placas de captura e dispositivos de vídeo.');
+    } finally {
+        detectCaptureButton.disabled = false;
+    }
+}
+
+function getQualityConstraints() {
+    const presets = {
+        '720p30': { width: 1280, height: 720, frameRate: 30 },
+        '1080p30': { width: 1920, height: 1080, frameRate: 30 },
+        '1080p60': { width: 1920, height: 1080, frameRate: 60 }
+    };
+    return presets[qualitySelect.value] || presets['1080p30'];
+}
+
+async function startSharing() {
+    if (sessionEnded || localStream || !socket.connected) {
+        return;
+    }
+
+    shareBtn.disabled = true;
+    let stream;
+    try {
+        const quality = getQualityConstraints();
+        if (sourceSelect.value === 'capture') {
+            const deviceId = captureDeviceSelect.value;
+            if (!deviceId) {
+                throw new Error('Escolha primeiro uma placa de captura ou dispositivo de vídeo.');
+            }
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    deviceId: { exact: deviceId },
+                    width: { ideal: quality.width },
+                    height: { ideal: quality.height },
+                    frameRate: { ideal: quality.frameRate }
+                },
+                audio: false
+            });
+        } else {
+            stream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    width: { ideal: quality.width },
+                    height: { ideal: quality.height },
+                    frameRate: { ideal: quality.frameRate }
+                },
+                audio: systemAudioInput.checked
+            });
+        }
+        const result = await new Promise(resolve => {
+            socket.timeout(10000).emit('start-screen', (error, response) => {
+                resolve(error
+                    ? { ok: false, message: 'O servidor não respondeu. Tente novamente.' }
+                    : response);
+            });
+        });
+
+        if (!result?.ok) {
+            stream.getTracks().forEach(track => track.stop());
+            setStatus(result?.message || 'Não foi possível iniciar o compartilhamento.');
+            return;
+        }
+
+        localStream = stream;
+        screenPaused = false;
+        activeSharerIds.add(socket.id);
+        const video = createVideo(true);
+        video.srcObject = stream;
+        videoGrid.prepend(video.closest('.screen-card'));
+        syncPictureInPicture();
+        video.play().catch(error => console.error('Não foi possível reproduzir a prévia local:', error));
+        shareBtn.hidden = true;
+        stopShareBtn.hidden = false;
+        pauseShareBtn.disabled = false;
+        pauseShareBtn.textContent = 'Pausar';
+        pauseShareBtn.setAttribute('aria-pressed', 'false');
+        audioBtn.disabled = false;
+        stream.getVideoTracks()[0]?.addEventListener('ended', () => stopSharing(), { once: true });
+        socket.emit('request-room-users');
+        updateRoomUi();
+        setStatus('Você está transmitindo. Os espectadores podem controlar o próprio áudio.');
+    } catch (error) {
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+        }
+        console.error('Não foi possível iniciar o compartilhamento:', error);
+        setStatus(error.name === 'NotAllowedError'
+            ? 'Captura cancelada. Autorize a fonte no seletor do navegador para transmitir.'
+            : error.message || 'Compartilhamento indisponível neste dispositivo.');
+    } finally {
+        updateCaptureCapabilities();
+    }
+}
+
+async function registerCurrentShare() {
+    if (!localStream || !socket.connected) {
+        return;
+    }
+
+    const result = await new Promise(resolve => {
+        socket.timeout(10000).emit('start-screen', (error, response) => {
+            resolve(error ? { ok: false } : response);
+        });
+    });
+    if (!result?.ok) {
+        setStatus('A sessão mudou durante a reconexão. Recarregue a sala para continuar.');
+        return;
+    }
+    activeSharerIds.add(socket.id);
+    if (screenPaused) {
+        socket.emit('screen-paused', true);
+    }
+}
+
+function stopSharing(notifyServer = true) {
+    if (!localStream) {
+        return;
+    }
+
+    const stream = localStream;
+    localStream = null;
+    screenPaused = false;
+    stream.getTracks().forEach(track => track.stop());
+    videoGrid.querySelector('[data-local-screen="true"]')?.closest('.screen-card')?.remove();
+    syncPictureInPicture();
+    activeSharerIds.delete(socket.id);
+    shareBtn.hidden = false;
+    stopShareBtn.hidden = true;
+    pauseShareBtn.disabled = true;
+    pauseShareBtn.textContent = 'Pausar';
+    audioBtn.disabled = activeSharerIds.size === 0;
+    if (notifyServer && socket.connected) {
+        socket.emit('stop-screen');
+    }
+    closeLocalSharerPeers();
+    updateRoomUi();
+    setStatus(sessionEnded ? 'Sala encerrada.' : 'Sua transmissão foi encerrada.');
+    updateCaptureCapabilities();
+}
+
+function togglePause() {
+    if (!localStream) {
+        return;
+    }
+    screenPaused = !screenPaused;
+    for (const track of localStream.getTracks()) {
+        track.enabled = !screenPaused;
+    }
+    pauseShareBtn.textContent = screenPaused ? 'Retomar' : 'Pausar';
+    pauseShareBtn.setAttribute('aria-pressed', String(screenPaused));
+    socket.emit('screen-paused', screenPaused);
+    syncPictureInPicture();
+    setStatus(screenPaused ? 'Transmissão pausada.' : 'Transmissão retomada.');
+}
+
+function toggleRoomAudio() {
+    audioEnabled = !audioEnabled;
+    for (const video of videoGrid.querySelectorAll('video:not([data-local-screen="true"])')) {
+        video.muted = !audioEnabled;
+        if (audioEnabled) {
+            video.play().catch(error => console.error('Não foi possível ativar o áudio da sala:', error));
+        }
+    }
+    syncPictureInPicture();
+    audioBtn.textContent = audioEnabled ? 'Silenciar sala' : 'Ativar áudio';
+    audioBtn.setAttribute('aria-pressed', String(audioEnabled));
+}
+
+function handleUserDisconnected(userId) {
+    participantIds.delete(userId);
+    handleScreenStopped(userId);
+}
+
+function findPeerFor(userId) {
+    return Array.from(peers.values()).find(peer => peer.remoteUserId === userId);
+}
+
+function setPausedLabel(video, paused) {
+    const card = video.closest('.screen-card');
+    let label = card?.querySelector('.screen-paused-label');
+    if (paused && card && !label) {
+        label = document.createElement('span');
+        label.className = 'screen-paused-label';
+        label.textContent = 'Transmissão pausada';
+        card.append(label);
+    } else if (!paused) {
+        label?.remove();
+    }
+}
+
+async function connectToViewer(userId) {
+    if (!localStream || !socket.connected || hasPeerFor(userId, true)) {
+        return;
+    }
+
+    try {
+        await iceConfigurationReady;
+        if (!iceConfiguration) {
+            throw iceConfigurationError || new Error('Configuração ICE indisponível.');
+        }
+        const connectionId = crypto.randomUUID();
+        const peer = createPeer(connectionId, userId, true);
+        localStream.getTracks().forEach(track => peer.connection.addTrack(track, localStream));
+
+        const offer = await peer.connection.createOffer();
+        await peer.connection.setLocalDescription(offer);
+        socket.emit('offer', {
+            target: userId,
+            connectionId,
+            offer: peer.connection.localDescription
+        });
+    } catch (error) {
+        console.error('Não foi possível iniciar transmissão para um participante:', error);
+        setStatus('Não foi possível estabelecer a conexão WebRTC. Verifique STUN/TURN.');
+    }
+}
+
+function createPeer(connectionId, remoteUserId, isLocalSharer) {
+    const connection = new RTCPeerConnection(iceConfiguration);
+    const video = createVideo(false);
+    const peer = {
+        connection,
+        video,
+        remoteUserId,
+        isLocalSharer,
+        pendingCandidates: [],
+        disconnectTimer: undefined
+    };
+    peers.set(connectionId, peer);
+
+    connection.ontrack = event => {
+        video.srcObject = event.streams[0];
+        video.muted = !audioEnabled;
+        videoGrid.append(video.closest('.screen-card'));
+        syncPictureInPicture();
+        video.play().catch(error => {
+            console.error('Não foi possível reproduzir a transmissão:', error);
+            setStatus('Clique em Ativar áudio ou permita a reprodução de mídia no navegador.');
+        });
+        updateRoomUi();
+    };
+
+    connection.onicecandidate = event => {
+        if (event.candidate && socket.connected) {
+            socket.emit('ice-candidate', {
+                target: remoteUserId,
+                connectionId,
+                candidate: event.candidate
+            });
+        }
+    };
+
+    connection.onconnectionstatechange = () => {
+        if (connection.connectionState === 'connected') {
+            retryAttempts.delete(remoteUserId);
+            clearTimeout(retryTimers.get(remoteUserId));
+            retryTimers.delete(remoteUserId);
+            clearTimeout(peer.disconnectTimer);
+            peer.disconnectTimer = undefined;
+            updateNetworkStatus();
+        } else if (connection.connectionState === 'disconnected' && isLocalSharer) {
+            if (!peer.disconnectTimer) {
+                peer.disconnectTimer = window.setTimeout(() => {
+                    if (connection.connectionState === 'disconnected') {
+                        schedulePeerRetry(peer, connectionId);
+                    }
+                }, 5000);
+            }
+        } else if (['failed', 'closed'].includes(connection.connectionState)) {
+            if (isLocalSharer) {
+                schedulePeerRetry(peer, connectionId);
+            } else {
+                closePeer(connectionId);
+            }
+        }
+    };
+
+    return peer;
+}
+
+function schedulePeerRetry(peer, connectionId) {
+    if (peers.get(connectionId) !== peer) {
+        return;
+    }
+    const remoteUserId = peer.remoteUserId;
+    closePeer(connectionId);
+    const attempt = (retryAttempts.get(remoteUserId) ?? 0) + 1;
+    retryAttempts.set(remoteUserId, attempt);
+    if (attempt > maxPeerRetries || !localStream || sessionEnded) {
+        setStatus('A conexão caiu. Reinicie o compartilhamento para tentar novamente.');
+        return;
+    }
+    const delay = Math.min(1000 * (2 ** (attempt - 1)), 8000);
+    setStatus(`Reconectando transmissão (${attempt}/${maxPeerRetries})...`);
+    const timer = window.setTimeout(() => {
+        retryTimers.delete(remoteUserId);
+        connectToViewer(remoteUserId);
+    }, delay);
+    retryTimers.set(remoteUserId, timer);
+}
+
+async function addQueuedCandidates(peer, connectionId) {
+    const earlyCandidates = pendingCandidatesByConnection.get(connectionId) ?? [];
+    peer.pendingCandidates.push(...earlyCandidates);
+    pendingCandidatesByConnection.delete(connectionId);
+
+    for (const candidate of peer.pendingCandidates) {
+        await peer.connection.addIceCandidate(candidate);
+    }
+    peer.pendingCandidates = [];
+}
+
+function hasPeerFor(userId, isLocalSharer) {
+    return Array.from(peers.values()).some(peer =>
+        peer.remoteUserId === userId && peer.isLocalSharer === isLocalSharer
+    );
+}
+
+function closePeersForSharer(userId) {
+    for (const [connectionId, peer] of peers) {
+        if (peer.remoteUserId === userId) {
+            closePeer(connectionId);
+        }
+    }
+    updateRoomUi();
+}
+
+function handleScreenStopped(userId) {
+    activeSharerIds.delete(userId);
+    if (userId === socket.id) {
+        closeLocalSharerPeers();
+        updateRoomUi();
+        return;
+    }
+    closePeersForSharer(userId);
+    updateRoomUi();
+}
+
+function closeLocalSharerPeers() {
+    for (const [connectionId, peer] of peers) {
+        if (peer.isLocalSharer) {
+            closePeer(connectionId);
+        }
+    }
+}
+
+function closePeer(connectionId) {
+    const peer = peers.get(connectionId);
+    if (!peer) {
+        return;
+    }
+
+    peer.connection.close();
+    clearTimeout(peer.disconnectTimer);
+    peer.video.closest('.screen-card')?.remove();
+    peers.delete(connectionId);
+    pendingCandidatesByConnection.delete(connectionId);
+    syncPictureInPicture();
+}
+
+function closeAllPeers() {
+    for (const connectionId of peers.keys()) {
+        closePeer(connectionId);
+    }
+}
+
+function createVideo(isLocal) {
+    const card = document.createElement('article');
+    card.className = 'screen-card';
+    const label = document.createElement('span');
+    label.className = 'screen-label';
+    label.textContent = isLocal ? 'Sua transmissão' : 'Tela compartilhada';
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = isLocal || !audioEnabled;
+    if (isLocal) {
+        video.dataset.localScreen = 'true';
+    }
+    card.append(video, label);
+    return video;
+}
+
+function setStatus(message) {
+    statusMessage.textContent = message;
+}
+
+function updateRoomStatus() {
+    if (sessionEnded) {
+        setStatus('Esta sala foi encerrada.');
+    } else if (!canShareScreen && !canCaptureVideoDevice) {
+        setStatus('Este dispositivo pode assistir. Para transmitir pelo celular, use o app Discord.');
+    } else if (activeSharerIds.size > 0) {
+        setStatus(`${activeSharerIds.size} ${activeSharerIds.size === 1 ? 'pessoa transmitindo' : 'pessoas transmitindo'}.`);
+    } else if (socket.connected) {
+        setStatus('Sala pronta. Transmitir é opcional: você também pode apenas assistir.');
+    }
+}
+
+function updateRoomUi() {
+    const localSharer = activeSharerIds.has(socket.id);
+    welcome.hidden = activeSharerIds.size > 0 || sessionEnded;
+    const total = participantIds.size + 1;
+    participantCount.textContent = total === 1 ? 'Só você' : `${total} pessoas`;
+    viewerTotal.textContent = String(total);
+    audioBtn.disabled = activeSharerIds.size === 0;
+    if (activeSharerIds.size === 0) {
+        audioEnabled = false;
+        audioBtn.textContent = 'Áudio desligado';
+        audioBtn.setAttribute('aria-pressed', 'false');
+    } else if (!audioEnabled) {
+        audioBtn.textContent = 'Ativar áudio';
+    }
+    shareBtn.disabled = sessionEnded || !socket.connected
+        || (sourceSelect.value === 'capture' ? !captureDeviceSelect.value : !canShareScreen);
+    welcomeShareBtn.disabled = shareBtn.disabled;
+    pauseShareBtn.disabled = !localSharer;
+    updateRoomStatus();
+    renderViewerList();
+}
+
+function renderViewerList() {
+    const viewers = [
+        `<li class="viewer-item"><span class="avatar" aria-hidden="true">V</span><span>Você</span><span class="viewer-self">você</span></li>`,
+        ...Array.from(participantIds).map((id, index) =>
+            `<li class="viewer-item"><span class="avatar" aria-hidden="true">${index + 1}</span><span>Participante ${index + 1}</span></li>`
+        )
+    ];
+    viewerList.innerHTML = viewers.join('');
+    viewerTotal.textContent = String(participantIds.size + 1);
+}
+
+async function shareInvite() {
+    const inviteUrl = `${window.location.origin}/s/${ROOM_ID}`;
+    if (!navigator.share) {
+        await copyInvite();
+        return;
+    }
+    try {
+        await navigator.share({
+            title: 'Minha sala no Guse Screen',
+            text: 'Entre nesta sala para assistir ou transmitir sua tela.',
+            url: inviteUrl
+        });
+    } catch (error) {
+        if (error.name !== 'AbortError') {
+            console.error('Não foi possível compartilhar o convite:', error);
+            setStatus('Não foi possível abrir o menu de compartilhamento. Tente copiar o link.');
+        }
+    }
+}
+
+async function copyInvite() {
+    const inviteUrl = `${window.location.origin}/s/${ROOM_ID}`;
+    try {
+        await navigator.clipboard.writeText(inviteUrl);
+        setStatus('Link do convite copiado.');
+    } catch (error) {
+        console.error('Não foi possível copiar o convite:', error);
+        setStatus('Não foi possível copiar. Selecione e copie o endereço da sala manualmente.');
+    }
+}
+
+function updateCaptureGuard() {
+    const blurred = captureProtectionEnabled && (document.hidden || !document.hasFocus());
+    document.body.classList.toggle('capture-blurred', blurred);
+    captureBlurNotice.hidden = !blurred;
+    if (activePipWindow && !activePipWindow.closed) {
+        activePipWindow.document.body.classList.toggle('pip-blurred', blurred);
+    }
+}
+
+function updateWatermark() {
+    if (!viewerId) {
+        return;
+    }
+    captureWatermark.textContent = `Discord ID ${viewerId} · ${new Date().toLocaleTimeString()}`;
+    const maxLeft = Math.max(8, window.innerWidth - 360);
+    const maxTop = Math.max(80, window.innerHeight - 300);
+    captureWatermark.style.left = `${Math.floor(Math.random() * maxLeft)}px`;
+    captureWatermark.style.top = `${Math.floor(Math.random() * maxTop)}px`;
+}
+
+function startNetworkStats() {
+    window.setInterval(() => {
+        if (socket.connected) {
+            socket.emit('latency-probe', performance.now());
+        }
+        updateWebRtcStats();
+        updateWatermark();
+    }, 5000);
+}
+
+async function updateWebRtcStats() {
+    let lost = 0;
+    let received = 0;
+    let worstRtt;
+    for (const peer of peers.values()) {
+        try {
+            const stats = await peer.connection.getStats();
+            for (const report of stats.values()) {
+                if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                    lost += Math.max(0, report.packetsLost || 0);
+                    received += Math.max(0, report.packetsReceived || 0);
+                }
+                if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime) {
+                    const rtt = Math.round(report.currentRoundTripTime * 1000);
+                    worstRtt = Math.max(worstRtt ?? 0, rtt);
+                }
+            }
+        } catch (error) {
+            console.error('Não foi possível obter estatísticas WebRTC:', error);
+        }
+    }
+    if (received + lost > 0) {
+        packetLossPercent = Math.round((lost / (received + lost)) * 100);
+    }
+    updateNetworkStatus(worstRtt);
+}
+
+function updateNetworkStatus(mediaRtt) {
+    const details = [];
+    if (typeof mediaRtt === 'number') {
+        details.push(`mídia ${mediaRtt} ms`);
+    } else if (typeof pingMs === 'number') {
+        details.push(`servidor ${pingMs} ms`);
+    }
+    if (typeof packetLossPercent === 'number') {
+        details.push(`perda ${packetLossPercent}%`);
+    }
+    networkStatus.textContent = details.length > 0
+        ? details.join(' · ')
+        : (activeSharerIds.size > 0 ? 'Conexão de mídia ativa' : 'Sem transmissão ativa');
+    networkStatus.dataset.quality = typeof packetLossPercent === 'number' && packetLossPercent > 5
+        ? 'poor'
+        : 'good';
+}
+
+function loadTheme() {
+    try {
+        const theme = localStorage.getItem('guse-theme');
+        if (theme === 'light' || theme === 'dark') {
+            if (theme === 'light') {
+                document.documentElement.dataset.theme = 'light';
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+            }
+        } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+            document.documentElement.dataset.theme = 'light';
+        }
+    } catch (error) {
+        console.error('Não foi possível carregar o tema salvo:', error);
+    }
+}
+
+function toggleTheme() {
+    const isLight = document.documentElement.dataset.theme === 'light';
+    const nextTheme = isLight ? 'dark' : 'light';
+    if (nextTheme === 'light') {
+        document.documentElement.dataset.theme = 'light';
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+    }
+    try {
+        localStorage.setItem('guse-theme', nextTheme);
+    } catch (error) {
+        console.error('Não foi possível salvar o tema:', error);
+    }
+}
+
+async function toggleFullscreen() {
+    try {
+        if (document.fullscreenElement) {
+            await document.exitFullscreen();
+        } else if (document.documentElement.requestFullscreen) {
+            await document.documentElement.requestFullscreen();
+        } else {
+            setStatus('Tela cheia não está disponível neste navegador.');
+        }
+    } catch (error) {
+        console.error('Não foi possível alternar para tela cheia:', error);
+        setStatus('O navegador não permitiu tela cheia. Use os controles do próprio navegador.');
+    }
+}
+
+async function openPictureInPicture() {
+    if (typeof window.documentPictureInPicture?.requestWindow === 'function') {
+        try {
+            const pipWindow = await window.documentPictureInPicture.requestWindow({
+                width: 720,
+                height: 460
+            });
+            for (const stylesheet of document.querySelectorAll('link[rel="stylesheet"]')) {
+                pipWindow.document.head.append(stylesheet.cloneNode(true));
+            }
+            pipWindow.document.body.className = 'pip-content';
+            const heading = pipWindow.document.createElement('h1');
+            heading.textContent = 'Guse Screen · sala';
+            pipWindow.document.body.append(heading);
+            const grid = pipWindow.document.createElement('div');
+            grid.className = 'pip-grid';
+            pipWindow.document.body.append(grid);
+            activePipWindow = pipWindow;
+            pipWindow.addEventListener('pagehide', () => {
+                if (activePipWindow === pipWindow) {
+                    activePipWindow = null;
+                }
+            }, { once: true });
+            pipWindow.addEventListener('blur', () => {
+                if (captureProtectionEnabled) {
+                    pipWindow.document.body.classList.add('pip-blurred');
+                }
+            });
+            pipWindow.addEventListener('focus', () => {
+                pipWindow.document.body.classList.remove('pip-blurred');
+            });
+            pipWindow.document.addEventListener('contextmenu', event => {
+                if (captureProtectionEnabled && event.target.closest('.screen-card')) {
+                    event.preventDefault();
+                }
+            });
+            pipWindow.document.addEventListener('keydown', event => {
+                if (captureProtectionEnabled && isScreenshotShortcut(event)) {
+                    event.preventDefault();
+                    grid.style.visibility = 'hidden';
+                    window.setTimeout(() => { grid.style.visibility = ''; }, 1500);
+                }
+            });
+            syncPictureInPicture();
+            setStatus('Sala aberta na janela flutuante.');
+            return;
+        } catch (error) {
+            console.error('Document Picture-in-Picture não foi permitido:', error);
+        }
+    }
+
+    const video = videoGrid.querySelector('video:not([data-local-screen="true"])');
+    if (video && typeof video.requestPictureInPicture === 'function') {
+        try {
+            await video.requestPictureInPicture();
+            setStatus('Transmissão aberta no Picture-in-Picture do vídeo.');
+            return;
+        } catch (error) {
+            console.error('Picture-in-Picture do vídeo não foi permitido:', error);
+        }
+    }
+
+    const popup = window.open(
+        `/room/${encodeURIComponent(ROOM_ID)}?popup=1`,
+        'guse-screen-popup',
+        'popup=yes,width=960,height=640,resizable=yes,scrollbars=yes'
+    );
+    if (popup) {
+        setStatus('Sala aberta em uma janela redimensionável. Ela pode não ficar sempre no topo.');
+    } else {
+        setStatus('Pop-up bloqueado ou não disponível. Permita pop-ups para este site.');
+    }
+}
+
+function syncPictureInPicture() {
+    if (!activePipWindow || activePipWindow.closed) {
+        return;
+    }
+    const grid = activePipWindow.document.querySelector('.pip-grid');
+    if (!grid) {
+        return;
+    }
+    grid.replaceChildren();
+    const cards = videoGrid.querySelectorAll('.screen-card');
+    if (cards.length === 0) {
+        const empty = activePipWindow.document.createElement('p');
+        empty.textContent = 'Aguardando uma transmissão nesta sala.';
+        grid.append(empty);
+        return;
+    }
+    for (const card of cards) {
+        grid.append(cloneScreenCard(card, activePipWindow.document));
+    }
+}
+
+function cloneScreenCard(card, targetDocument) {
+    const clone = targetDocument.createElement('article');
+    clone.className = 'screen-card';
+    const sourceVideo = card.querySelector('video');
+    const video = targetDocument.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = sourceVideo.muted;
+    video.srcObject = sourceVideo.srcObject;
+    const label = targetDocument.createElement('span');
+    label.className = 'screen-label';
+    label.textContent = card.querySelector('.screen-label')?.textContent || 'Transmissão';
+    clone.append(video, label);
+    if (captureProtectionEnabled && viewerId) {
+        const watermark = targetDocument.createElement('span');
+        watermark.className = 'pip-watermark';
+        watermark.textContent = `Discord ID ${viewerId} · ${new Date().toLocaleTimeString()}`;
+        clone.append(watermark);
+    }
+    video.play().catch(error => console.error('Não foi possível reproduzir a janela flutuante:', error));
+    return clone;
+}
+
+function leaveRoom() {
+    stopSharing();
+    closeAllPeers();
+    socket.disconnect();
+    window.location.assign('/');
+}
+
+function handleKeyboardShortcuts(event) {
+    if (captureProtectionEnabled && isScreenshotShortcut(event)) {
+        event.preventDefault();
+        const videos = Array.from(document.querySelectorAll('.screen-card video'));
+        videos.forEach(video => { video.style.visibility = 'hidden'; });
+        window.setTimeout(() => videos.forEach(video => { video.style.visibility = ''; }), 1500);
+        setStatus('Atalho de captura detectado. A proteção web é apenas uma dissuasão e não bloqueia capturas do sistema.');
+        return;
+    }
+    if (event.altKey || event.ctrlKey || event.metaKey || event.target.matches('input, select, textarea, button, a, summary')) {
+        return;
+    }
+    const key = event.key.toLowerCase();
+    if (key === 'h') {
+        helpDialog.showModal();
+    } else if (key === 't') {
+        toggleTheme();
+    } else if (key === 'f') {
+        void toggleFullscreen();
+    } else if (key === 'p') {
+        void openPictureInPicture();
+    } else if (key === 'i') {
+        void copyInvite();
+    } else if (key === 's' && !localStream) {
+        void startSharing();
+    } else if (key === 'x' && localStream) {
+        stopSharing();
+    } else if (key === 'm' && activeSharerIds.size > 0) {
+        toggleRoomAudio();
+    } else if (event.code === 'Space' && localStream) {
+        event.preventDefault();
+        togglePause();
+    }
+}
+
+function isScreenshotShortcut(event) {
+    return event.key === 'PrintScreen'
+        || (event.shiftKey && event.metaKey && ['3', '4', '5'].includes(event.key))
+        || (event.shiftKey && event.ctrlKey && event.key.toLowerCase() === 's');
 }

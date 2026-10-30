@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111318">
+    <meta name="description" content="Tokens de design e componentes da interface Guse Screen.">
+    <title>Guia visual — Guse Screen</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="guide-page design-page">
+    <header class="topbar">
+        <a class="brand" href="/" aria-label="Voltar para o Guse Screen">
+            <span class="brand-mark" aria-hidden="true">G</span>
+            <span>Guse <span class="brand-light">Screen</span></span>
+        </a>
+        <a class="quiet-button guide-back" href="/">Voltar à sala</a>
+    </header>
+    <main class="guide-main">
+        <section class="guide-hero">
+            <p class="eyebrow">SISTEMA DE DESIGN</p>
+            <h1>Guia visual</h1>
+            <p>Uma linguagem de sala calma, legível e consistente: palco central para vídeo, presença lateral para participantes e controles agrupados por tarefa.</p>
+        </section>
+        <section class="guide-card">
+            <p class="guide-kicker">TOKENS</p>
+            <h2>Cor, espaçamento e forma</h2>
+            <p>Os tokens vivem em <code>style.css</code>. A paleta escura é o padrão para reduzir distração em conteúdo de vídeo; a paleta clara é escolhida pelo controle de tema.</p>
+            <div class="swatch-grid">
+                <div class="swatch"><span style="--swatch:#111318"></span><strong>Canvas</strong><code>#111318</code></div>
+                <div class="swatch"><span style="--swatch:#1b1d24"></span><strong>Superfície</strong><code>#1B1D24</code></div>
+                <div class="swatch"><span style="--swatch:#d6c9ff"></span><strong>Ação</strong><code>#D6C9FF</code></div>
+                <div class="swatch"><span style="--swatch:#8bd5ad"></span><strong>Conectado</strong><code>#8BD5AD</code></div>
+                <div class="swatch"><span style="--swatch:#ffb4ab"></span><strong>Parar / alerta</strong><code>#FFB4AB</code></div>
+            </div>
+            <ul>
+                <li><strong>Grade:</strong> unidade base 8 px; 4 px para ajustes menores.</li>
+                <li><strong>Raios:</strong> 12 px para controles, 20 px para cartões, 28 px para destaques.</li>
+                <li><strong>Tipografia:</strong> pilha nativa do sistema; títulos compactos, texto de ajuda em altura de linha confortável.</li>
+                <li><strong>Elevação:</strong> sombras suaves; contraste e bordas continuam distinguindo cartões sem depender só de sombra.</li>
+            </ul>
+        </section>
+        <section class="guide-card">
+            <p class="guide-kicker">COMPONENTES</p>
+            <h2>Estados e controles</h2>
+            <div class="component-samples">
+                <button class="primary-button" type="button">Ação principal</button>
+                <button class="control-button" type="button">Ação secundária</button>
+                <span class="network-status">Conectado · boa qualidade</span>
+                <span class="participant-count">3 pessoas</span>
+            </div>
+            <p>Foco de teclado visível, alvos interativos com pelo menos 44 px, mensagens de conexão em região viva e preferência por movimento reduzido respeitada. O layout passa do palco com painel lateral para uma coluna em telas estreitas.</p>
+        </section>
+        <section class="guide-card">
+            <p class="guide-kicker">REFERÊNCIAS</p>
+            <h2>Princípios de interface</h2>
+            <ul>
+                <li><a href="https://m3.material.io/" target="_blank" rel="noreferrer">Material Design 3</a>: hierarquia, tokens e componentes coerentes.</li>
+                <li><a href="https://developer.apple.com/design/human-interface-guidelines/" target="_blank" rel="noreferrer">Apple Human Interface Guidelines</a>: controles familiares e comportamento consistente.</li>
+                <li><a href="https://www.w3.org/TR/WCAG22/" target="_blank" rel="noreferrer">WCAG 2.2</a>: foco, contraste, teclado e alvos de interação.</li>
+                <li><a href="https://www.nngroup.com/articles/ten-usability-heuristics/" target="_blank" rel="noreferrer">Nielsen Norman Group</a>: estado visível, controle do usuário e recuperação de erros.</li>
+            </ul>
+        </section>
+    </main>
+    <footer class="guide-footer">Este guia descreve a intenção do sistema visual; conformidade WCAG ainda exige auditoria automatizada e testes com pessoas.</footer>
+</body>
+</html>

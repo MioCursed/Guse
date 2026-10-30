@@ -1,18 +1,139 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Guse Meet</title>
+    <meta name="theme-color" content="#111318">
+    <meta name="description" content="Compartilhe sua tela com amigos em uma sala privada do Guse Screen.">
+    <title>Guse Screen — sua tela, na conversa</title>
     <link rel="stylesheet" href="/style.css">
     <script src="/socket.io/socket.io.js"></script>
     <script src="/app.js" defer></script>
 </head>
 <body>
-    <div id="video-grid"></div>
-    <div class="controls">
-        <button id="share-btn">Share Screen</button>
-        <button id="stop-share-btn" style="display: none;">Stop Sharing</button>
-    </div>
+    <header class="topbar">
+        <a class="brand" href="/" aria-label="Guse Screen">
+            <span class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 8.5 12h-2.7a6.5 6.5 0 1 1-1.6-7.1l1.9-1.9A8.97 8.97 0 0 0 12 3Zm-1.2 7.1v2.7h5.1A4.2 4.2 0 1 1 12 8.3c.8 0 1.6.2 2.2.6l1.9-1.9A6.7 6.7 0 1 0 18.6 13h-7.8v-2.9Z"/></svg>
+            </span>
+            <span>Guse <span class="brand-light">Screen</span></span>
+        </a>
+        <div class="topbar-actions">
+            <span class="room-indicator" id="connection-indicator" aria-live="polite">
+                <span class="live-dot"></span><span>Conectando...</span>
+            </span>
+            <span id="participant-count" class="participant-count" aria-live="polite">Conectando...</span>
+            <button id="copy-link-btn" class="quiet-button" type="button" aria-label="Copiar link da sala" title="Copiar link da sala (I)">
+                <span aria-hidden="true">↗</span><span>Copiar link</span>
+            </button>
+            <button id="invite-btn" class="quiet-button" type="button" aria-label="Convidar">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a3 3 0 1 0-2.83-4H15a3 3 0 0 0 0 8c1.3 0 2.4-.83 2.83-2L20 11v7.17a3 3 0 1 0 2 0V10a1 1 0 0 0-1-1h-2.17A3 3 0 0 0 18 8ZM6 3a3 3 0 1 0 2.83 4H11a1 1 0 1 0 0-2H8.83A3 3 0 0 0 6 3Zm0 10a3 3 0 1 0 2.83 4H11a1 1 0 1 0 0-2H8.83A3 3 0 0 0 6 13Z"/></svg>
+                <span>Convidar</span>
+            </button>
+            <button id="theme-btn" class="icon-button" type="button" aria-label="Alternar tema claro e escuro" title="Tema claro ou escuro (T)">◐</button>
+            <button id="help-btn" class="icon-button" type="button" aria-label="Abrir guia de dispositivos" title="Ajuda (H)">?</button>
+        </div>
+    </header>
+    <main>
+        <div class="room-layout">
+            <section class="stage" aria-label="Transmissões da sala">
+                <div class="stage-heading">
+                    <div>
+                        <p class="eyebrow">SUA SALA · <span id="room-short-id"></span></p>
+                        <h1>Uma sala para assistir junto</h1>
+                    </div>
+                    <div class="network-status" id="network-status" role="status" aria-live="polite">Preparando conexão...</div>
+                </div>
+                <section id="welcome" class="welcome-card" aria-labelledby="welcome-title">
+                    <div class="welcome-icon" aria-hidden="true">
+                        <svg viewBox="0 0 48 48"><rect x="7" y="9" width="34" height="25" rx="4"></rect><path d="M18 40h12m-6-6v6m-7-18 5-5 5 5m-5-5v12"></path></svg>
+                    </div>
+                    <p class="welcome-kicker">ASSISTA JUNTO</p>
+                    <h2 id="welcome-title">Sua tela, na conversa.</h2>
+                    <p class="welcome-description" id="sharing-guidance">Compartilhe uma tela ou entre pelo celular para assistir.</p>
+                    <button id="welcome-share-btn" class="primary-button" type="button" disabled>
+                        <span>Começar a transmitir</span><span class="arrow" aria-hidden="true">→</span>
+                    </button>
+                    <p class="privacy-note">Você escolhe a fonte e autoriza a captura no próprio dispositivo.</p>
+                </section>
+                <p id="status-message" role="status" aria-live="polite">Conectando à sala...</p>
+                <div id="video-grid" aria-live="polite"></div>
+            </section>
+            <aside class="viewer-panel" aria-labelledby="viewer-heading">
+                <div class="viewer-panel-heading">
+                    <div><p class="eyebrow">AO VIVO</p><h2 id="viewer-heading">Na sala</h2></div>
+                    <span class="viewer-total" id="viewer-total">1</span>
+                </div>
+                <ul id="viewer-list" class="viewer-list" aria-live="polite">
+                    <li class="viewer-item"><span class="avatar" aria-hidden="true">V</span><span>Você</span><span class="viewer-self">você</span></li>
+                </ul>
+                <details class="room-qr">
+                    <summary>Entrar pelo celular · QR</summary>
+                    <img id="room-qr-image" alt="QR code para abrir o convite desta sala" width="200" height="200">
+                    <p>Escaneie para abrir o convite. O acesso ainda exige confirmação pelo Discord.</p>
+                </details>
+                <a class="device-guide-link" href="/devices.html">Guias para PC, celular e consoles <span aria-hidden="true">→</span></a>
+                <a class="device-guide-link" href="/design.html">Guia visual</a>
+                <p class="privacy-side-note">A proteção web dificulta capturas, mas não impede fotos, gravações ou capturas do sistema.</p>
+            </aside>
+        </div>
+    </main>
+    <footer class="controls">
+        <div class="capture-options">
+            <label for="source-select">Fonte</label>
+            <select id="source-select" aria-label="Tipo de fonte para compartilhar">
+                <option value="display">Tela, janela ou aba</option>
+                <option value="capture">Placa HDMI / câmera</option>
+            </select>
+            <label for="quality-select">Qualidade</label>
+            <select id="quality-select" aria-label="Qualidade da transmissão">
+                <option value="720p30">720p · 30 fps</option>
+                <option value="1080p30" selected>1080p · 30 fps</option>
+                <option value="1080p60">1080p · 60 fps</option>
+            </select>
+            <label id="system-audio-option" class="system-audio-option" for="system-audio">
+                <input id="system-audio" type="checkbox">
+                <span>Áudio da tela</span>
+            </label>
+            <label id="capture-device-label" for="capture-device-select" hidden>Dispositivo</label>
+            <select id="capture-device-select" aria-label="Dispositivo de captura de vídeo" hidden></select>
+            <button id="detect-capture-btn" class="control-button" type="button" hidden>Detectar dispositivos</button>
+        </div>
+        <div class="control-actions">
+            <button id="share-btn" class="primary-button" type="button" disabled title="Começar a transmitir (S)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5h-5l1 3h2v1H7.5v-1h2l1-3h-5A1.5 1.5 0 0 1 4 14.5v-9ZM5.5 5a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h13a.5.5 0 0 0 .5-.5v-9a.5.5 0 0 0-.5-.5h-13Z"/></svg>
+            <span>Transmitir minha tela</span>
+            </button>
+            <button id="pause-share-btn" class="control-button" type="button" disabled title="Pausar transmissão (Espaço)" aria-pressed="false">Pausar</button>
+            <button id="audio-btn" class="control-button" type="button" disabled title="Silenciar áudio da sala (M)" aria-pressed="false">Áudio ligado</button>
+            <button id="stop-share-btn" class="stop-button" type="button" hidden title="Parar transmissão (X)">
+            <span class="stop-icon" aria-hidden="true"></span>
+            <span>Parar transmissão</span>
+            </button>
+            <button id="fullscreen-btn" class="control-button" type="button" title="Tela cheia (F)">Tela cheia</button>
+            <button id="pip-btn" class="control-button" type="button" title="Modo pop-up (P)">Pop-up</button>
+            <button id="leave-btn" class="control-button leave-button" type="button" aria-label="Sair da sala" title="Sair da sala">Sair</button>
+        </div>
+        <label id="protection-setting" class="protection-setting" hidden>
+            <input id="protection-toggle" type="checkbox" checked>
+            <span>Proteção web</span>
+        </label>
+    </footer>
+    <div id="capture-watermark" class="capture-watermark" aria-hidden="true"></div>
+    <div id="capture-blur-notice" class="capture-blur-notice" role="status" hidden>Conteúdo oculto enquanto a sala está em segundo plano.</div>
+    <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-title">
+        <div class="dialog-heading"><div><p class="eyebrow">AJUDA RÁPIDA</p><h2 id="help-title">Como transmitir</h2></div><button id="close-help-btn" class="icon-button" type="button" aria-label="Fechar guia">×</button></div>
+        <p>Escolha uma origem para ver instruções verificadas para seu dispositivo.</p>
+        <div class="help-links">
+            <a href="/devices.html#pc">PC / Mac / Linux</a>
+            <a href="/devices.html#mobile">Celular / tablet</a>
+            <a href="/devices.html#xbox">Xbox One / Series</a>
+            <a href="/devices.html#playstation">PS4 / PS5</a>
+            <a href="/devices.html#switch">Nintendo Switch</a>
+            <a href="/devices.html#capture-card">Placa de captura</a>
+        </div>
+        <p class="privacy-dialog-note">Nenhum botão do site pode iniciar captura de tela sem consentimento explícito no seletor do navegador ou no app Discord.</p>
+        <div class="keyboard-help"><strong>Atalhos</strong><span>S iniciar · X parar · Espaço pausar · M áudio · F tela cheia · P pop-up · T tema · H ajuda · I copiar convite</span></div>
+    </dialog>
 </body>
 </html>
