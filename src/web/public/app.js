@@ -27,7 +27,11 @@ let audioEnabled = false;
 let activePipWindow = null;
 let activeSharerIds = new Set();
 let participantIds = new Set();
+let participantProfiles = new Map();
+let viewerProfile = { userId: '', displayName: 'Você' };
 let viewerId = '';
+let mobilePipPlaceholder = null;
+let mobilePipCard = null;
 let pingMs;
 let packetLossPercent;
 
@@ -53,10 +57,10 @@ const helpDialog = document.getElementById('help-dialog');
 const canShareScreen = window.isSecureContext && Boolean(navigator.mediaDevices?.getDisplayMedia);
 const canCaptureVideoDevice = Boolean(navigator.mediaDevices?.getUserMedia && navigator.mediaDevices?.enumerateDevices);
 
-document.getElementById('room-short-id').textContent = ROOM_ID.slice(0, 8);
 document.getElementById('room-qr-image').src = `/api/rooms/${encodeURIComponent(ROOM_ID)}/qr`;
 shareBtn.disabled = !canShareScreen;
 welcomeShareBtn.disabled = !canShareScreen;
+inviteBtn.hidden = true;
 
 if (new URLSearchParams(window.location.search).has('popup')) {
     document.body.classList.add('popup-mode');
@@ -64,7 +68,7 @@ if (new URLSearchParams(window.location.search).has('popup')) {
 
 if (!canShareScreen) {
     document.getElementById('sharing-guidance').textContent =
-        'Este navegador pode assistir. Para transmitir pelo celular, use o app Discord; no PC, tente um navegador compatível.';
+        'Você pode assistir por aqui. Para compartilhar a tela do celular, use o app Discord.';
 }
 if (!canCaptureVideoDevice) {
     sourceSelect.querySelector('option[value="capture"]').disabled = true;
@@ -88,6 +92,7 @@ socket.on('disconnect', () => {
     connectionIndicator.dataset.state = 'connecting';
     connectionIndicator.querySelector('span:last-child').textContent = 'Reconectando...';
     participantIds.clear();
+    participantProfiles.clear();
     activeSharerIds.clear();
     closeAllPeers();
     updateRoomUi();
@@ -113,9 +118,10 @@ socket.on('room-not-found', () => {
     setStatus('Esta sala não existe mais ou já foi encerrada.');
 });
 
-socket.on('room-users', async ({ users, sharingUserIds, isOwner, captureProtectionEnabled: roomProtection }) => {
+socket.on('room-users', async ({ users, participants = [], sharingUserIds, isOwner, captureProtectionEnabled: roomProtection }) => {
     activeSharerIds = new Set(sharingUserIds);
     participantIds = new Set(users);
+    participantProfiles = new Map(participants.map(profile => [profile.socketId, profile]));
     roomIsOwner = Boolean(isOwner);
     captureProtectionEnabled = Boolean(roomProtection);
     protectionSetting.hidden = !roomIsOwner;
@@ -128,12 +134,16 @@ socket.on('room-users', async ({ users, sharingUserIds, isOwner, captureProtecti
         users.forEach(connectToViewer);
     } else {
         sharingUserIds.forEach(userId => socket.emit('request-screen', userId));
-        updateRoomStatus();
     }
+    updateRoomUi();
 });
 
-socket.on('user-connected', userId => {
+socket.on('user-connected', participant => {
+    const userId = typeof participant === 'string' ? participant : participant.socketId;
     participantIds.add(userId);
+    if (typeof participant === 'object' && participant) {
+        participantProfiles.set(userId, participant);
+    }
     updateRoomUi();
     if (localStream) {
         connectToViewer(userId);
@@ -182,7 +192,7 @@ socket.on('offer', async ({ from, connectionId, offer }) => {
         socket.emit('answer', { target: from, connectionId, answer: peer.connection.localDescription });
     } catch (error) {
         console.error('Não foi possível receber a transmissão:', error);
-        setStatus('Falha ao conectar a transmissão. Se persistir, verifique STUN/TURN e tente novamente.');
+        setStatus('Não foi possível conectar à transmissão. Tente novamente ou avise o criador da sala.');
     }
 });
 
@@ -280,7 +290,6 @@ welcomeShareBtn.addEventListener('click', startSharing);
 stopShareBtn.addEventListener('click', () => stopSharing());
 pauseShareBtn.addEventListener('click', togglePause);
 audioBtn.addEventListener('click', toggleRoomAudio);
-inviteBtn.addEventListener('click', shareInvite);
 copyLinkBtn.addEventListener('click', copyInvite);
 sourceSelect.addEventListener('change', updateCaptureCapabilities);
 detectCaptureButton.addEventListener('click', discoverVideoDevices);
@@ -294,6 +303,8 @@ document.getElementById('close-help-btn').addEventListener('click', () => helpDi
 document.getElementById('fullscreen-btn').addEventListener('click', toggleFullscreen);
 document.getElementById('pip-btn').addEventListener('click', openPictureInPicture);
 document.getElementById('leave-btn').addEventListener('click', leaveRoom);
+document.getElementById('close-mobile-pip').addEventListener('click', closeMobileMiniPlayer);
+inviteBtn.addEventListener('click', sendDiscordInvite);
 document.addEventListener('contextmenu', event => {
     if (captureProtectionEnabled && event.target.closest('.screen-card')) {
         event.preventDefault();
@@ -321,7 +332,7 @@ async function loadIceConfiguration() {
     } catch (error) {
         iceConfigurationError = error;
         console.error('Não foi possível carregar a configuração ICE:', error);
-        setStatus('Não foi possível carregar STUN/TURN. Atualize a sala ou contate o responsável.');
+        setStatus('A conexão da sala não ficou pronta. Atualize a página ou tente novamente.');
     }
 }
 
@@ -336,9 +347,12 @@ async function loadRoomSession() {
         }
         const data = await response.json();
         viewerId = data.viewerId;
+        viewerProfile = data.profile || { userId: data.viewerId, displayName: `Discord · ${data.viewerId}` };
+        renderViewerList();
         captureProtectionEnabled = Boolean(data.captureProtectionEnabled);
         roomIsOwner = Boolean(data.isOwner);
         protectionSetting.hidden = !roomIsOwner;
+        inviteBtn.hidden = true;
         protectionToggle.checked = captureProtectionEnabled;
         updateWatermark();
         updateCaptureGuard();
@@ -362,9 +376,9 @@ function updateCaptureCapabilities() {
     captureDeviceLabel.hidden = !usingCaptureDevice;
     detectCaptureButton.hidden = !usingCaptureDevice;
     if (usingCaptureDevice && !hasSelectedDevice) {
-        setStatus('Detecte e escolha uma placa de captura ou câmera antes de iniciar.');
+        setStatus('Escolha uma câmera ou placa de captura antes de começar.');
     } else if (!canShareScreen && !usingCaptureDevice) {
-        setStatus('Este dispositivo pode assistir. Para transmitir pelo celular, use o app Discord.');
+        setStatus('Neste celular, você pode assistir. Para compartilhar a tela, use o app Discord.');
     } else {
         updateRoomStatus();
     }
@@ -519,7 +533,10 @@ function stopSharing(notifyServer = true) {
     localStream = null;
     screenPaused = false;
     stream.getTracks().forEach(track => track.stop());
-    videoGrid.querySelector('[data-local-screen="true"]')?.closest('.screen-card')?.remove();
+    document.querySelector('[data-local-screen="true"]')?.closest('.screen-card')?.remove();
+    if (mobilePipCard && !mobilePipCard.isConnected) {
+        closeMobileMiniPlayer();
+    }
     syncPictureInPicture();
     activeSharerIds.delete(socket.id);
     shareBtn.hidden = false;
@@ -553,19 +570,21 @@ function togglePause() {
 
 function toggleRoomAudio() {
     audioEnabled = !audioEnabled;
-    for (const video of videoGrid.querySelectorAll('video:not([data-local-screen="true"])')) {
+    for (const video of document.querySelectorAll('.screen-card video:not([data-local-screen="true"])')) {
         video.muted = !audioEnabled;
         if (audioEnabled) {
             video.play().catch(error => console.error('Não foi possível ativar o áudio da sala:', error));
         }
     }
     syncPictureInPicture();
-    audioBtn.textContent = audioEnabled ? 'Silenciar sala' : 'Ativar áudio';
+    audioBtn.textContent = audioEnabled ? 'Silenciar' : 'Som';
+    audioBtn.setAttribute('aria-label', audioEnabled ? 'Silenciar som' : 'Ativar som');
     audioBtn.setAttribute('aria-pressed', String(audioEnabled));
 }
 
 function handleUserDisconnected(userId) {
     participantIds.delete(userId);
+    participantProfiles.delete(userId);
     handleScreenStopped(userId);
 }
 
@@ -609,7 +628,7 @@ async function connectToViewer(userId) {
         });
     } catch (error) {
         console.error('Não foi possível iniciar transmissão para um participante:', error);
-        setStatus('Não foi possível estabelecer a conexão WebRTC. Verifique STUN/TURN.');
+        setStatus('Não foi possível conectar a tela. Confira sua internet e tente novamente.');
     }
 }
 
@@ -630,10 +649,13 @@ function createPeer(connectionId, remoteUserId, isLocalSharer) {
         video.srcObject = event.streams[0];
         video.muted = !audioEnabled;
         videoGrid.append(video.closest('.screen-card'));
+        if (!document.getElementById('mobile-pip').hidden && !mobilePipCard) {
+            openMobileMiniPlayer();
+        }
         syncPictureInPicture();
         video.play().catch(error => {
             console.error('Não foi possível reproduzir a transmissão:', error);
-            setStatus('Clique em Ativar áudio ou permita a reprodução de mídia no navegador.');
+            setStatus('Toque em Som para ouvir ou confira as permissões do navegador.');
         });
         updateRoomUi();
     };
@@ -753,6 +775,9 @@ function closePeer(connectionId) {
     peer.video.closest('.screen-card')?.remove();
     peers.delete(connectionId);
     pendingCandidatesByConnection.delete(connectionId);
+    if (mobilePipCard && !mobilePipCard.isConnected) {
+        closeMobileMiniPlayer();
+    }
     syncPictureInPicture();
 }
 
@@ -787,7 +812,7 @@ function updateRoomStatus() {
     if (sessionEnded) {
         setStatus('Esta sala foi encerrada.');
     } else if (!canShareScreen && !canCaptureVideoDevice) {
-        setStatus('Este dispositivo pode assistir. Para transmitir pelo celular, use o app Discord.');
+        setStatus('Neste celular, você pode assistir. Para compartilhar a tela, use o app Discord.');
     } else if (activeSharerIds.size > 0) {
         setStatus(`${activeSharerIds.size} ${activeSharerIds.size === 1 ? 'pessoa transmitindo' : 'pessoas transmitindo'}.`);
     } else if (socket.connected) {
@@ -801,50 +826,87 @@ function updateRoomUi() {
     const total = participantIds.size + 1;
     participantCount.textContent = total === 1 ? 'Só você' : `${total} pessoas`;
     viewerTotal.textContent = String(total);
+    inviteBtn.hidden = !roomIsOwner || !localSharer;
+    updateWatermark();
     audioBtn.disabled = activeSharerIds.size === 0;
     if (activeSharerIds.size === 0) {
         audioEnabled = false;
-        audioBtn.textContent = 'Áudio desligado';
+        audioBtn.textContent = 'Som';
+        audioBtn.setAttribute('aria-label', 'Som indisponível');
         audioBtn.setAttribute('aria-pressed', 'false');
     } else if (!audioEnabled) {
-        audioBtn.textContent = 'Ativar áudio';
+        audioBtn.textContent = 'Som';
+        audioBtn.setAttribute('aria-label', 'Ativar som');
     }
     shareBtn.disabled = sessionEnded || !socket.connected
         || (sourceSelect.value === 'capture' ? !captureDeviceSelect.value : !canShareScreen);
     welcomeShareBtn.disabled = shareBtn.disabled;
     pauseShareBtn.disabled = !localSharer;
     updateRoomStatus();
+    shareBtn.setAttribute('aria-label', localSharer ? 'Compartilhando sua tela' : 'Começar a compartilhar');
     renderViewerList();
 }
 
 function renderViewerList() {
-    const viewers = [
-        `<li class="viewer-item"><span class="avatar" aria-hidden="true">V</span><span>Você</span><span class="viewer-self">você</span></li>`,
-        ...Array.from(participantIds).map((id, index) =>
-            `<li class="viewer-item"><span class="avatar" aria-hidden="true">${index + 1}</span><span>Participante ${index + 1}</span></li>`
-        )
-    ];
-    viewerList.innerHTML = viewers.join('');
+    viewerList.replaceChildren();
+    viewerList.append(createViewerItem(viewerProfile, true));
+    for (const id of participantIds) {
+        const profile = participantProfiles.get(id) || {
+            userId: id,
+            displayName: 'Entrando...'
+        };
+        viewerList.append(createViewerItem(profile));
+    }
     viewerTotal.textContent = String(participantIds.size + 1);
 }
 
-async function shareInvite() {
-    const inviteUrl = `${window.location.origin}/s/${ROOM_ID}`;
-    if (!navigator.share) {
-        await copyInvite();
-        return;
+function createViewerItem(profile, isSelf = false) {
+    const item = document.createElement('li');
+    item.className = 'viewer-item';
+    const avatar = document.createElement('span');
+    avatar.className = 'avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+    if (profile.avatarUrl) {
+        const image = document.createElement('img');
+        image.src = profile.avatarUrl;
+        image.alt = '';
+        image.referrerPolicy = 'no-referrer';
+        avatar.append(image);
+    } else {
+        avatar.textContent = (profile.displayName || 'D').trim().slice(0, 1).toUpperCase();
     }
+    const name = document.createElement('span');
+    name.className = 'viewer-name';
+    name.textContent = profile.displayName || `Discord · ${profile.userId}`;
+    item.title = `Conta Discord: ${profile.userId}`;
+    item.append(avatar, name);
+    if (isSelf) {
+        const self = document.createElement('span');
+        self.className = 'viewer-self';
+        self.textContent = 'Você';
+        item.append(self);
+    }
+    return item;
+}
+
+async function sendDiscordInvite() {
+    inviteBtn.disabled = true;
     try {
-        await navigator.share({
-            title: 'Minha sala no Guse Screen',
-            text: 'Entre nesta sala para assistir ou transmitir sua tela.',
-            url: inviteUrl
+        const response = await fetch(`/api/rooms/${encodeURIComponent(ROOM_ID)}/invite`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'fetch' }
         });
-    } catch (error) {
-        if (error.name !== 'AbortError') {
-            console.error('Não foi possível compartilhar o convite:', error);
-            setStatus('Não foi possível abrir o menu de compartilhamento. Tente copiar o link.');
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result.error || 'Não foi possível enviar o convite para o Discord.');
         }
+        setStatus('Convite enviado no canal do Discord.');
+    } catch (error) {
+        console.error('Não foi possível enviar o convite para o Discord:', error);
+        setStatus(error.message || 'Não foi possível enviar o convite. Tente novamente.');
+    } finally {
+        inviteBtn.disabled = !roomIsOwner || !activeSharerIds.has(socket.id);
     }
 }
 
@@ -863,20 +925,28 @@ function updateCaptureGuard() {
     const blurred = captureProtectionEnabled && (document.hidden || !document.hasFocus());
     document.body.classList.toggle('capture-blurred', blurred);
     captureBlurNotice.hidden = !blurred;
+    updateWatermark();
     if (activePipWindow && !activePipWindow.closed) {
         activePipWindow.document.body.classList.toggle('pip-blurred', blurred);
     }
 }
 
 function updateWatermark() {
-    if (!viewerId) {
+    const videoCard = videoGrid.querySelector('.screen-card');
+    const videoBounds = videoCard?.getBoundingClientRect();
+    if (!viewerId || !captureProtectionEnabled || !activeSharerIds.size || !videoBounds?.width || !videoBounds.height) {
+        captureWatermark.hidden = true;
         return;
     }
-    captureWatermark.textContent = `Discord ID ${viewerId} · ${new Date().toLocaleTimeString()}`;
-    const maxLeft = Math.max(8, window.innerWidth - 360);
-    const maxTop = Math.max(80, window.innerHeight - 300);
-    captureWatermark.style.left = `${Math.floor(Math.random() * maxLeft)}px`;
-    captureWatermark.style.top = `${Math.floor(Math.random() * maxTop)}px`;
+    captureWatermark.hidden = false;
+    captureWatermark.textContent = `Conta Discord · ${viewerId}`;
+    const width = Math.min(240, videoBounds.width - 16);
+    const height = 32;
+    const maxLeft = Math.max(videoBounds.left + 8, videoBounds.right - width - 8);
+    const maxTop = Math.max(videoBounds.top + 8, videoBounds.bottom - height - 8);
+    captureWatermark.style.maxWidth = `${Math.max(1, width)}px`;
+    captureWatermark.style.left = `${videoBounds.left + 8 + Math.random() * Math.max(0, maxLeft - videoBounds.left - 8)}px`;
+    captureWatermark.style.top = `${videoBounds.top + 8 + Math.random() * Math.max(0, maxTop - videoBounds.top - 8)}px`;
 }
 
 function startNetworkStats() {
@@ -917,18 +987,13 @@ async function updateWebRtcStats() {
 }
 
 function updateNetworkStatus(mediaRtt) {
-    const details = [];
-    if (typeof mediaRtt === 'number') {
-        details.push(`mídia ${mediaRtt} ms`);
-    } else if (typeof pingMs === 'number') {
-        details.push(`servidor ${pingMs} ms`);
-    }
-    if (typeof packetLossPercent === 'number') {
-        details.push(`perda ${packetLossPercent}%`);
-    }
-    networkStatus.textContent = details.length > 0
-        ? details.join(' · ')
-        : (activeSharerIds.size > 0 ? 'Conexão de mídia ativa' : 'Sem transmissão ativa');
+    const latency = typeof mediaRtt === 'number' ? mediaRtt : pingMs;
+    networkStatus.textContent = activeSharerIds.size === 0
+        ? 'Pronta para assistir'
+        : (typeof latency === 'number' && latency > 250)
+            || (typeof packetLossPercent === 'number' && packetLossPercent > 5)
+            ? 'Conexão instável'
+            : 'Conexão boa';
     networkStatus.dataset.quality = typeof packetLossPercent === 'number' && packetLossPercent > 5
         ? 'poor'
         : 'good';
@@ -1025,7 +1090,7 @@ async function openPictureInPicture() {
                 }
             });
             syncPictureInPicture();
-            setStatus('Sala aberta na janela flutuante.');
+            setStatus('Janela flutuante aberta.');
             return;
         } catch (error) {
             console.error('Document Picture-in-Picture não foi permitido:', error);
@@ -1036,11 +1101,16 @@ async function openPictureInPicture() {
     if (video && typeof video.requestPictureInPicture === 'function') {
         try {
             await video.requestPictureInPicture();
-            setStatus('Transmissão aberta no Picture-in-Picture do vídeo.');
+            setStatus('Vídeo aberto na janela flutuante.');
             return;
         } catch (error) {
             console.error('Picture-in-Picture do vídeo não foi permitido:', error);
         }
+    }
+
+    if (window.matchMedia('(max-width: 720px)').matches) {
+        openMobileMiniPlayer();
+        return;
     }
 
     const popup = window.open(
@@ -1049,11 +1119,76 @@ async function openPictureInPicture() {
         'popup=yes,width=960,height=640,resizable=yes,scrollbars=yes'
     );
     if (popup) {
-        setStatus('Sala aberta em uma janela redimensionável. Ela pode não ficar sempre no topo.');
+        setStatus('Sala aberta em outra janela. Ela pode não ficar sempre visível.');
     } else {
-        setStatus('Pop-up bloqueado ou não disponível. Permita pop-ups para este site.');
+        setStatus('O navegador não permitiu abrir outra janela. Tente novamente pelo botão.');
     }
 }
+
+function openMobileMiniPlayer() {
+    const miniPlayer = document.getElementById('mobile-pip');
+    const miniContent = document.getElementById('mobile-pip-content');
+    const card = videoGrid.querySelector('.screen-card');
+    if (card && card !== mobilePipCard) {
+        mobilePipPlaceholder = document.createComment('video position');
+        card.before(mobilePipPlaceholder);
+        mobilePipCard = card;
+        miniContent.replaceChildren(card);
+    } else if (!card && !mobilePipCard) {
+        const emptyState = document.createElement('p');
+        emptyState.className = 'mobile-pip-empty';
+        emptyState.textContent = 'Aguardando alguém compartilhar a tela.';
+        miniContent.replaceChildren(emptyState);
+    }
+    miniPlayer.hidden = false;
+    setStatus('Janela flutuante aberta. Arraste para mover ou toque em Fechar.');
+}
+
+function closeMobileMiniPlayer() {
+    if (mobilePipCard) {
+        if (mobilePipPlaceholder?.parentNode && mobilePipCard.isConnected) {
+            mobilePipPlaceholder.replaceWith(mobilePipCard);
+        } else {
+            mobilePipPlaceholder?.remove();
+        }
+    }
+    mobilePipPlaceholder = null;
+    mobilePipCard = null;
+    document.getElementById('mobile-pip').hidden = true;
+}
+
+const mobilePipHandle = document.getElementById('mobile-pip-handle');
+let mobilePipDrag = null;
+mobilePipHandle.addEventListener('pointerdown', event => {
+    if (event.target.closest('button')) {
+        return;
+    }
+    const miniPlayer = document.getElementById('mobile-pip');
+    mobilePipDrag = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        left: miniPlayer.getBoundingClientRect().left,
+        top: miniPlayer.getBoundingClientRect().top
+    };
+    mobilePipHandle.setPointerCapture(event.pointerId);
+});
+mobilePipHandle.addEventListener('pointermove', event => {
+    if (!mobilePipDrag || mobilePipDrag.pointerId !== event.pointerId) {
+        return;
+    }
+    const miniPlayer = document.getElementById('mobile-pip');
+    const left = Math.min(window.innerWidth - miniPlayer.offsetWidth - 8,
+        Math.max(8, mobilePipDrag.left + event.clientX - mobilePipDrag.x));
+    const top = Math.min(window.innerHeight - miniPlayer.offsetHeight - 8,
+        Math.max(8, mobilePipDrag.top + event.clientY - mobilePipDrag.y));
+    miniPlayer.style.left = `${left}px`;
+    miniPlayer.style.top = `${top}px`;
+    miniPlayer.style.right = 'auto';
+    miniPlayer.style.bottom = 'auto';
+});
+mobilePipHandle.addEventListener('pointerup', () => { mobilePipDrag = null; });
+mobilePipHandle.addEventListener('pointercancel', () => { mobilePipDrag = null; });
 
 function syncPictureInPicture() {
     if (!activePipWindow || activePipWindow.closed) {
@@ -1112,7 +1247,7 @@ function handleKeyboardShortcuts(event) {
         const videos = Array.from(document.querySelectorAll('.screen-card video'));
         videos.forEach(video => { video.style.visibility = 'hidden'; });
         window.setTimeout(() => videos.forEach(video => { video.style.visibility = ''; }), 1500);
-        setStatus('Atalho de captura detectado. A proteção web é apenas uma dissuasão e não bloqueia capturas do sistema.');
+        setStatus('A proteção ajuda, mas não consegue impedir fotos ou gravações da tela.');
         return;
     }
     if (event.altKey || event.ctrlKey || event.metaKey || event.target.matches('input, select, textarea, button, a, summary')) {

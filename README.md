@@ -14,13 +14,14 @@ npm run deploy:commands
 npm start
 ```
 
-`SESSION_SECRET` deve ter pelo menos 32 caracteres aleatórios; gere um com `openssl rand -hex 32`. `DISCORD_CLIENT_SECRET` é opcional para o acesso por slash command e obrigatório apenas para login OAuth em links de convite. Cadastre no Discord Developer Portal a URL OAuth exata impressa como `Discord OAuth callback URL` se habilitar esse fluxo.
+`SESSION_SECRET` deve ter pelo menos 32 caracteres aleatórios; gere um com `openssl rand -hex 32`. `DISCORD_CLIENT_SECRET` é opcional para o acesso por slash command e obrigatório apenas para login OAuth em links de convite. `DISCORD_INVITE_CHANNEL_ID` define o canal de texto no qual o bot publica convites; o valor padrão é `1484265142320365638`. O canal precisa pertencer ao mesmo servidor da sala, e o bot precisa poder enviar mensagens e embeds. Cadastre no Discord Developer Portal a URL OAuth exata impressa como `Discord OAuth callback URL` se habilitar esse fluxo.
 
 No Codespaces, configure `PUBLIC_URL` como o endereço HTTPS público da porta 3000 e marque a porta como **Public**. `SCREEN_DOMAIN`, quando definido, substitui `PUBLIC_URL` na criação dos links.
 
 ## Como funciona
 
 - **Autorização:** `/screen start` cria a sala e fornece ao criador um link de acesso privado, além do convite. `/screen join room_id` valida a pessoa pela interação autenticada no Discord e emite um ticket de uso único, válido por cinco minutos. O ticket abre a sala sem OAuth. Mantenha-o privado: até ser resgatado, ele funciona como um link bearer associado à identidade do usuário. `/screen end` encerra a sala. Convites comuns usam OAuth Discord e exigem participação no servidor.
+- **Participantes e convites:** cada conexão é associada à conta Discord verificada; a sala mostra nome, avatar e ID para distinguir contas. Enquanto o criador estiver transmitindo, **Convidar** publica um embed no canal configurado. Só o criador pode usar esse botão, com limite de um envio a cada 30 segundos. O bot não marca pessoas no canal.
 - **Sinalização:** Socket.IO valida a sessão assinada, o servidor Discord da sala, o alvo dos eventos e os formatos/tamanhos dos sinais. O criador controla a configuração de proteção contra captura da sala.
 - **Mídia:** cada participante conecta diretamente aos transmissores por WebRTC; o servidor não retransmite vídeo. Isso reduz o custo de mídia no servidor, mas a malha P2P cresce em tráfego e CPU conforme o número de espectadores e transmissores. A aplicação não é um SFU e não promete escala para salas grandes.
 - **ICE:** `STUN_URLS` define os servidores STUN separados por vírgula. Para redes que bloqueiam conexões diretas, configure `TURN_URLS` e `TURN_SHARED_SECRET` para um servidor TURN com autenticação REST coturn compatível. O segredo permanece no servidor; a sala recebe credenciais HMAC temporárias de uma hora. Sem TURN, algumas combinações de NAT/firewall não conseguirão estabelecer mídia.
@@ -41,10 +42,10 @@ O serviço TURN deve estar configurado com o mesmo segredo de autenticação RES
 
 ## PC, celular e consoles
 
-A página [Guias de dispositivos](/devices.html) contém instruções dentro do produto. Em resumo:
+As instruções de uso estão somente no botão **?** dentro da sala. A interface foi reorganizada para celular com uma área de vídeo ampla, lista compacta de participantes, controles acessíveis e opções de transmissão recolhidas. O tema usa superfícies escuras, azul e agrupamento de ações familiares do Discord, com espaçamento em grade de 8 px, foco visível e áreas de toque de pelo menos 44 px. A marca e os ícones continuam próprios do Guse, sem carregar arquivos proprietários ou sugerir que este webapp seja um produto oficial do Discord.
 
-- **PC/Mac/Linux:** use um navegador atualizado com HTTPS e `getDisplayMedia()`. Selecione tela, janela ou aba pelo seletor nativo. A qualidade selecionada é uma preferência, não garantia: navegador, sistema e hardware podem limitá-la.
-- **Celular/tablet:** o site é voltado a espectadores quando a captura de tela não estiver disponível no navegador. Para transmitir a tela inteira, use o app Discord numa chamada de voz e confirme a captura no sistema. Essa chamada Discord é separada: o bot não importa o vídeo Go Live para a sala Guse. Escolhemos essa alternativa em vez de prometer um app nativo; este repositório não possui MediaProjection Android nem extensão ReplayKit iOS.
+- **PC/Mac/Linux:** toque em **Compartilhar**, escolha uma tela ou janela e confirme. O navegador pode limitar a qualidade.
+- **Celular/tablet:** o site permite assistir. Para compartilhar a tela inteira, use o app Discord numa chamada de voz e confirme no aparelho. Essa chamada é separada: o bot não importa o vídeo para a sala Guse. Este repositório não inclui app nativo Android/iOS.
 - **Xbox One / Series X|S:** é possível transmitir nativamente para uma chamada Discord após vincular as contas Xbox e Discord. Esse vídeo fica na chamada Discord, não nesta sala web. Para a sala Guse, use uma placa HDMI num PC.
 - **PS4 / PS5:** use PS Remote Play em um computador e compartilhe a janela; alternativamente, use uma placa HDMI. Remote Play no celular pode ser compartilhado pelo Discord, mas não é ingestão para Guse. Proteções HDCP podem impedir a captura e não devem ser contornadas.
 - **Nintendo Switch:** use uma placa HDMI conectada ao computador.
@@ -52,11 +53,11 @@ A página [Guias de dispositivos](/devices.html) contém instruções dentro do 
 
 ## Controles da sala
 
-A interface oferece iniciar/parar e pausar/retomar transmissão; áudio recebido ligado/desligado; opção para solicitar áudio de sistema quando o navegador/fonte permitir; presets 720p30, 1080p30 e 1080p60; seleção de dispositivo de vídeo; copiar/compartilhar convite e QR gerado localmente; tela cheia; pop-up; espectadores; latência de sinalização/perda estimada via WebRTC; tema claro/escuro; sair da sala; e guias de dispositivo.
+A sala oferece compartilhar/parar e pausar, controlar o som, escolher uma qualidade simples (Padrão, Alta ou Mais fluida), selecionar tela ou câmera/placa, copiar convite, QR, tela cheia, janela flutuante, lista de pessoas reconhecidas pelo Discord, estado de conexão, tema claro/escuro e sair. As instruções ficam dentro do botão **?**. O convite do Discord aparece para o criador enquanto ele transmite.
 
-Atalhos (quando o foco não está em um controle ou campo): **S** iniciar, **X** parar, **Espaço** pausar/retomar, **M** áudio, **F** tela cheia, **P** pop-up, **T** tema, **H** ajuda e **I** copiar convite. Navegadores e sistemas podem reservar atalhos.
+Atalhos (quando o foco não está em um controle ou campo): **S** iniciar, **X** parar, **Espaço** pausar/retomar, **M** áudio, **F** tela cheia, **P** janela flutuante, **T** tema, **H** ajuda e **I** copiar convite. Navegadores e sistemas podem reservar atalhos.
 
-O pop-up tenta, em ordem: **Document Picture-in-Picture** para a sala; **Picture-in-Picture nativo** para um vídeo; janela redimensionável via `window.open()`. MDN Browser Compatibility Data lista Document PiP a partir de Chrome/Edge 116 e Firefox 151, não Android nem Safari; o PiP nativo de vídeo tem suporte diferente por plataforma. Só a primeira opção oferece uma janela flutuante integrada; pop-ups podem ser bloqueados e a janela comum pode não ficar no topo. A disponibilidade é detectada em tempo de execução, não inferida apenas pela versão do navegador.
+A janela flutuante tenta, em ordem: **Document Picture-in-Picture** para a sala; PiP nativo do vídeo; mini player móvel arrastável dentro da página; janela redimensionável em desktop. O mini player móvel mantém a transmissão na tela atual; não é uma janela separada do sistema. Document PiP não está disponível em Android/iOS; PiP de vídeo depende do navegador e de haver vídeo ativo. A disponibilidade é detectada em tempo de execução. Janelas extras podem ser bloqueadas.
 
 ## Segurança e limites de captura
 
@@ -75,8 +76,8 @@ Esta tabela separa automação do que depende de hardware/contas reais. A emula�
 | Chromium desktop no runner Playwright/Linux (Chrome for Testing 156) | Testado | API/UI detectadas; fluxo de dispositivo de vídeo com stream simulado; seletor nativo de tela não automatizado | E2E e axe passaram |
 | Firefox desktop no runner Playwright/Linux (157) | Testado | API/UI detectadas; fluxo de dispositivo de vídeo com stream simulado; seletor nativo não automatizado | E2E e axe passaram |
 | WebKit desktop no runner Playwright/Linux (27.2) | Testado | API/UI detectadas; fluxo de dispositivo de vídeo com stream simulado; seletor nativo não automatizado | E2E e axe passaram |
-| Perfil Pixel 7 emulado pelo Chromium | Layout e sala testados | Captura real do Android não testada | E2E e axe passaram |
-| Perfil iPhone 13 emulado pelo WebKit | Layout e sala testados | Não é iPhone/iOS real; ReplayKit e captura não testados | E2E e axe passaram |
+| Perfil Pixel 7 emulado pelo Chromium | Layout em 320–430 px, controles e mini player flutuante testados | Captura real do Android e PiP nativo não testados | E2E e axe passaram |
+| Perfil iPhone 13 emulado pelo WebKit | Layout em 320–430 px, controles e mini player flutuante testados | Não é iPhone/iOS real; ReplayKit e PiP nativo não testados | E2E e axe passaram |
 | Android físico / iOS físico | Não testado | Use o app Discord; captura da tela inteira no Discord não foi automatizada | Checklist manual abaixo |
 | Xbox, PlayStation, Switch e placas HDMI | Não testado | Exige console, conta, adaptador e hardware real | Checklist manual abaixo |
 | STUN/TURN em rede real | Geração de credencial TURN testada | Coturn, NAT/firewall e qualidade de mídia não testados | Teste de integração local cobre API/signaling |
@@ -89,12 +90,12 @@ npm run test:e2e   # Chromium, Firefox, WebKit, perfis mobile e Lighthouse
 npm run test:lighthouse # auditoria Lighthouse isolada
 ```
 
-O E2E também desliga e restaura a rede para verificar reconexão do Socket.IO; isso não simula perda percentual de pacotes nem reconexão ICE de uma transmissão de mídia. O fluxo de captura de dispositivo é exercitado com um `MediaStream` simulado; o seletor nativo de tela, câmera/placa reais e mídia P2P entre espectadores não foram automatizados. axe-core não encontrou violações WCAG 2.2 AA na página da sala nos cinco perfis executados. Lighthouse no Chromium reportou **acessibilidade 100/100** e **performance 98/100** na execução mais recente neste ambiente; esses valores variam com hardware, rede e build e não certificam conformidade WCAG. Desempenho sob carga, mídia P2P real, TURN/coturn e leitores de tela não foram executados nesta validação.
+O E2E também desliga e restaura a rede para verificar reconexão do Socket.IO; isso não simula perda percentual de pacotes nem reconexão ICE de uma transmissão de mídia. O fluxo de captura de dispositivo é exercitado com um `MediaStream` simulado; o seletor nativo de tela, câmera/placa reais e mídia P2P entre espectadores não foram automatizados. axe-core não encontrou violações WCAG 2.2 AA nos cinco perfis executados. Lighthouse no Chromium reportou **acessibilidade 100/100** e **performance 98/100** na validação mais recente; os valores variam com hardware, rede e build e não certificam conformidade WCAG. Desempenho sob carga, mídia P2P real, TURN/coturn e leitores de tela não foram executados nesta validação.
 
 Checklist manual pendente:
 
 1. PC real: capturar tela, janela, aba, áudio do sistema; testar presets, pausa, áudio, webcam/placa e permissões negadas.
-2. Android/iOS reais: assistir; transmitir tela inteira pelo Discord; confirmar que a transmissão Discord não aparece na sala Guse e ocultar notificações pessoais.
+2. Android/iOS reais: assistir, testar o mini player e PiP nativo do sistema; transmitir tela inteira pelo Discord; confirmar que a transmissão Discord não aparece na sala Guse e ocultar notificações pessoais.
 3. Xbox One/Series: vincular contas e testar **Parties & chats > Stream your game** numa chamada Discord; confirmar separadamente o caminho por placa HDMI até Guse.
 4. PS4/PS5: testar PS Remote Play em janela e uma placa HDMI autorizada; anotar bloqueios HDCP sem tentar contorná-los.
 5. Switch: testar placa HDMI, seleção de dispositivo e áudio compatível.
@@ -113,7 +114,3 @@ Fontes técnicas e de plataforma consultadas em 30/10/2026:
 - Compatibilidade de APIs: [MDN Browser Compatibility Data — Document PiP](https://github.com/mdn/browser-compat-data/blob/main/api/DocumentPictureInPicture.json), [MDN `enumerateDevices()`](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/enumerateDevices), [MDN `getUserMedia()`](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia).
 - Captura nativa/DRM: [Android `FLAG_SECURE`](https://developer.android.com/reference/android/view/WindowManager.LayoutParams#FLAG_SECURE), [Apple `UIScreen.isCaptured`](https://developer.apple.com/documentation/uikit/uiscreen/iscaptured), [Apple screenshot notification](https://developer.apple.com/documentation/uikit/uiapplication/userdidtakescreenshotnotification), [W3C Encrypted Media Extensions](https://www.w3.org/TR/encrypted-media-2/), [Apple FairPlay Streaming](https://developer.apple.com/streaming/fps/). Os links de artigos de DRM Gumlet/VdoCipher fornecidos na solicitação retornaram 404 na consulta.
 - Design/acessibilidade: [Material Design 3](https://m3.material.io/), [Apple Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/), [WCAG 2.2](https://www.w3.org/TR/WCAG22/), [Nielsen Norman Group — heurísticas](https://www.nngroup.com/articles/ten-usability-heuristics/).
-
-## Guia visual
-
-Veja [Guia visual](./src/web/public/design.html) para cores, tokens, espaçamento, componentes e referências de design. Os tokens e componentes de produção estão em `src/web/public/style.css`.
