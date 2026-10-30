@@ -290,6 +290,7 @@ test('one-time access tickets are consumed and expire from reuse', async () => {
 test('room signaling enforces guild membership and owner-only protection controls', async () => {
     const owner = await connectSocket(ownerId);
     const viewer = await connectSocket(viewerId);
+    const secondSharer = await connectSocket('456789012345678901');
     const outsiders = await connectSocket('345678901234567890', '876543210987654321');
 
     const ownerJoined = waitForEvent(owner, 'room-users');
@@ -308,6 +309,14 @@ test('room signaling enforces guild membership and owner-only protection control
         userId: viewerId,
         displayName: `Discord · ${viewerId}`
     }]);
+
+    const secondSharerJoined = waitForEvent(secondSharer, 'room-users');
+    const ownerSawSecondSharer = waitForEvent(owner, 'user-connected');
+    const viewerSawSecondSharer = waitForEvent(viewer, 'user-connected');
+    secondSharer.emit('join-room', roomId);
+    const [secondSharerRoom] = await secondSharerJoined;
+    assert.deepEqual(secondSharerRoom.users, [owner.id, viewer.id]);
+    await Promise.all([ownerSawSecondSharer, viewerSawSecondSharer]);
 
     const rejected = waitForEvent(outsiders, 'authorization-required');
     outsiders.emit('join-room', roomId);
@@ -332,6 +341,31 @@ test('room signaling enforces guild membership and owner-only protection control
     assert.deepEqual(started, { ok: true });
     assert.deepEqual(await screenStarted, [owner.id]);
 
+    const secondScreenStarted = waitForEvent(viewer, 'screen-started');
+    const ownerSawSecondScreen = waitForEvent(owner, 'screen-started');
+    const secondStarted = await new Promise(resolve => {
+        secondSharer.timeout(1000).emit('start-screen', (error, response) => {
+            resolve(error ? { ok: false } : response);
+        });
+    });
+    assert.deepEqual(secondStarted, { ok: true });
+    assert.deepEqual(await Promise.all([secondScreenStarted, ownerSawSecondScreen]), [
+        [secondSharer.id],
+        [secondSharer.id]
+    ]);
+
+    const ownerStopped = waitForEvent(secondSharer, 'screen-stopped');
+    owner.emit('stop-screen');
+    assert.deepEqual(await ownerStopped, [owner.id]);
+    const updatedSharers = waitForEvent(secondSharer, 'room-users');
+    secondSharer.emit('request-room-users');
+    const [roomWithOneSharer] = await updatedSharers;
+    assert.deepEqual(roomWithOneSharer.sharingUserIds, [secondSharer.id]);
+
+    const secondStopped = waitForEvent(viewer, 'screen-stopped');
+    secondSharer.emit('stop-screen');
+    assert.deepEqual(await secondStopped, [secondSharer.id]);
+
     const relayedOffer = waitForEvent(viewer, 'offer');
     owner.emit('offer', {
         target: viewer.id,
@@ -344,5 +378,6 @@ test('room signaling enforces guild membership and owner-only protection control
 
     owner.disconnect();
     viewer.disconnect();
+    secondSharer.disconnect();
     outsiders.disconnect();
 });

@@ -428,6 +428,13 @@ main {
     position: absolute;
 }
 
+.screen-label {
+    max-width: calc(100% - 24px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .screen-paused-label {
     bottom: 48px;
     color: #fff;

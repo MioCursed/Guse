@@ -66,7 +66,7 @@ if (new URLSearchParams(window.location.search).has('popup')) {
 
 if (!canShareScreen) {
     document.getElementById('sharing-guidance').textContent =
-        'Você pode assistir por aqui. Para compartilhar a tela do celular, use o app Discord.';
+        'Este navegador permite assistir, mas não compartilhar a tela nesta sala. O app Discord transmite apenas para chamadas do Discord.';
 }
 if (!canCaptureVideoDevice) {
     sourceSelect.querySelector('option[value="capture"]').disabled = true;
@@ -585,7 +585,7 @@ function handleUserDisconnected(userId) {
 }
 
 function findPeerFor(userId) {
-    return Array.from(peers.values()).find(peer => peer.remoteUserId === userId);
+    return Array.from(peers.values()).find(peer => peer.remoteUserId === userId && !peer.isLocalSharer);
 }
 
 function setPausedLabel(video, paused) {
@@ -630,7 +630,7 @@ async function connectToViewer(userId) {
 
 function createPeer(connectionId, remoteUserId, isLocalSharer) {
     const connection = new RTCPeerConnection(iceConfiguration);
-    const video = createVideo(false);
+    const video = createVideo(false, remoteUserId);
     const peer = {
         connection,
         video,
@@ -783,12 +783,14 @@ function closeAllPeers() {
     }
 }
 
-function createVideo(isLocal) {
+function createVideo(isLocal, remoteUserId) {
     const card = document.createElement('article');
     card.className = 'screen-card';
     const label = document.createElement('span');
     label.className = 'screen-label';
-    label.textContent = isLocal ? 'Sua transmissão' : 'Tela compartilhada';
+    label.textContent = isLocal
+        ? 'Sua transmissão'
+        : `Transmissão de ${participantProfiles.get(remoteUserId)?.displayName || 'participante'}`;
     const video = document.createElement('video');
     video.autoplay = true;
     video.playsInline = true;
@@ -807,10 +809,10 @@ function setStatus(message) {
 function updateRoomStatus() {
     if (sessionEnded) {
         setStatus('Esta sala foi encerrada.');
-    } else if (!canShareScreen && !canCaptureVideoDevice) {
-        setStatus('Neste celular, você pode assistir. Para compartilhar a tela, use o app Discord.');
     } else if (activeSharerIds.size > 0) {
         setStatus(`${activeSharerIds.size} ${activeSharerIds.size === 1 ? 'pessoa transmitindo' : 'pessoas transmitindo'}.`);
+    } else if (!canShareScreen) {
+        setStatus('Este navegador permite assistir, mas não compartilhar a tela nesta sala.');
     } else if (socket.connected) {
         setStatus('Sala pronta. Transmitir é opcional: você também pode apenas assistir.');
     }

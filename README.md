@@ -45,7 +45,7 @@ O serviço TURN deve estar configurado com o mesmo segredo de autenticação RES
 As instruções de uso estão somente no botão **?** dentro da sala. A interface foi reorganizada para celular com uma área de vídeo ampla, lista compacta de participantes, controles acessíveis e opções de transmissão recolhidas. A identidade visual própria do Guse usa uma paleta verde-menta, âmbar e lilás, ilustração geométrica original e superfícies com profundidade para expressar encontros digitais descontraídos sem copiar a identidade do Discord. Essa direção considera os princípios de personalidade divertida, experiência consistente e comunicação legível descritos no [guia público de marca do Discord](https://my.corebook.io/1zObrQ89Q4wHhgFCfYIUhMUvmNf4XjxO), além das restrições explícitas contra imitar a aparência do Discord. Não incluí o logo, a tipografia nem assets proprietários do Discord; a referência à plataforma serve apenas para explicar o fluxo. Mantemos foco visível e áreas de toque de pelo menos 44 px.
 
 - **PC/Mac/Linux:** toque em **Compartilhar**, escolha uma tela ou janela e confirme. O navegador pode limitar a qualidade.
-- **Celular/tablet:** o site permite assistir. Para compartilhar a tela inteira, use o app Discord numa chamada de voz e confirme no aparelho. Essa chamada é separada: o bot não importa o vídeo para a sala Guse. Este repositório não inclui app nativo Android/iOS.
+- **Celular/tablet:** o site permite assistir, mas navegadores móveis comuns não oferecem a captura de tela necessária para transmitir nesta sala. Compartilhar pelo app Discord envia o vídeo somente para uma chamada Discord; o bot não importa esse fluxo para a sala Guse. Transmissão móvel direta exigiria um app nativo companheiro (Android `MediaProjection`; iOS `ReplayKit Broadcast Upload Extension`), que não faz parte deste repositório. No Android, a captura nativa exige consentimento explícito do sistema para cada sessão; consulte a [documentação oficial de MediaProjection](https://developer.android.com/media/grow/media-projection) e a [documentação oficial do ReplayKit](https://developer.apple.com/documentation/replaykit).
 - **Xbox One / Series X|S:** é possível transmitir nativamente para uma chamada Discord após vincular as contas Xbox e Discord. Esse vídeo fica na chamada Discord, não nesta sala web. Para a sala Guse, use uma placa HDMI num PC.
 - **PS4 / PS5:** use PS Remote Play em um computador e compartilhe a janela; alternativamente, use uma placa HDMI. Remote Play no celular pode ser compartilhado pelo Discord, mas não é ingestão para Guse. Proteções HDCP podem impedir a captura e não devem ser contornadas.
 - **Nintendo Switch:** use uma placa HDMI conectada ao computador.
@@ -54,6 +54,8 @@ As instruções de uso estão somente no botão **?** dentro da sala. A interfac
 ## Controles da sala
 
 A sala oferece compartilhar/parar e pausar, controlar o som, escolher uma qualidade simples (Padrão, Alta ou Mais fluida), selecionar tela ou câmera/placa, copiar convite, QR, tela cheia, janela flutuante, lista de pessoas reconhecidas pelo Discord, estado de conexão, tema claro/escuro e sair. As instruções ficam dentro do botão **?**. O convite do Discord aparece para o criador enquanto ele transmite.
+
+Mais de uma pessoa pode transmitir simultaneamente; cada vídeo remoto é identificado pelo nome Discord de quem compartilha. A mídia usa conexões WebRTC P2P entre transmissores e espectadores, não um servidor SFU: cada transmissão adicional aumenta o tráfego e o processamento nos participantes. O recurso é adequado a salas pequenas e não implica capacidade ilimitada.
 
 Atalhos (quando o foco não está em um controle ou campo): **S** iniciar, **X** parar, **Espaço** pausar/retomar, **M** áudio, **F** tela cheia, **P** janela flutuante, **T** tema, **H** ajuda e **I** copiar convite. Navegadores e sistemas podem reservar atalhos.
 
@@ -78,7 +80,7 @@ Esta tabela separa automação do que depende de hardware/contas reais. A emula�
 | WebKit desktop no runner Playwright/Linux (27.2) | Testado | API/UI detectadas; fluxo de dispositivo de vídeo com stream simulado; seletor nativo não automatizado | E2E e axe passaram |
 | Perfil Pixel 7 emulado pelo Chromium | Layout em 320–430 px, controles e mini player flutuante testados | Captura real do Android e PiP nativo não testados | E2E e axe passaram |
 | Perfil iPhone 13 emulado pelo WebKit | Layout em 320–430 px, controles e mini player flutuante testados | Não é iPhone/iOS real; ReplayKit e PiP nativo não testados | E2E e axe passaram |
-| Android físico / iOS físico | Não testado | Use o app Discord; captura da tela inteira no Discord não foi automatizada | Checklist manual abaixo |
+| Android físico / iOS físico | Não testado | Navegador móvel sem captura de tela; app Discord transmite apenas para chamada Discord. App nativo Guse não disponível | Checklist manual abaixo |
 | Xbox, PlayStation, Switch e placas HDMI | Não testado | Exige console, conta, adaptador e hardware real | Checklist manual abaixo |
 | STUN/TURN em rede real | Geração de credencial TURN testada | Coturn, NAT/firewall e qualidade de mídia não testados | Teste de integração local cobre API/signaling |
 
@@ -90,7 +92,7 @@ npm run test:e2e   # Chromium, Firefox, WebKit, perfis mobile e Lighthouse
 npm run test:lighthouse # auditoria Lighthouse isolada
 ```
 
-O E2E também desliga e restaura a rede para verificar reconexão do Socket.IO; isso não simula perda percentual de pacotes nem reconexão ICE de uma transmissão de mídia. O fluxo de captura de dispositivo é exercitado com um `MediaStream` simulado; o seletor nativo de tela, câmera/placa reais e mídia P2P entre espectadores não foram automatizados. axe-core não encontrou violações WCAG 2.2 AA nos cinco perfis executados. Lighthouse no Chromium reportou **acessibilidade 100/100** e **performance 97/100** na validação mais recente; os valores variam com hardware, rede e build e não certificam conformidade WCAG. Desempenho sob carga, mídia P2P real, TURN/coturn e leitores de tela não foram executados nesta validação.
+O E2E também desliga e restaura a rede para verificar reconexão do Socket.IO; isso não simula perda percentual de pacotes nem reconexão ICE de uma transmissão de mídia. O teste de sinalização valida que mais de uma pessoa pode iniciar e encerrar transmissões sem interromper as outras; ele não automatiza mídia P2P real. O fluxo de captura de dispositivo é exercitado com um `MediaStream` simulado; o seletor nativo de tela, câmera/placa reais e mídia WebRTC entre espectadores não foram automatizados. axe-core não encontrou violações WCAG 2.2 AA nos cinco perfis executados. Lighthouse no Chromium reportou **acessibilidade 100/100** e **performance 97/100** na validação mais recente; os valores variam com hardware, rede e build e não certificam conformidade WCAG. Desempenho sob carga, mídia P2P real, TURN/coturn e leitores de tela não foram executados nesta validação.
 
 Checklist manual pendente:
 

@@ -66,6 +66,30 @@ test('verified room, help, sharing options and QR are available', async ({ page 
     await page.getByRole('button', { name: 'Fechar ajuda' }).click();
 });
 
+test('room explains when this browser cannot share its screen', async ({ page }) => {
+    await page.addInitScript(() => {
+        const mediaDevices = navigator.mediaDevices;
+        Object.defineProperty(navigator, 'mediaDevices', {
+            configurable: true,
+            value: new Proxy(mediaDevices, {
+                get(target, property) {
+                    if (property === 'getDisplayMedia') {
+                        return undefined;
+                    }
+                    const value = Reflect.get(target, property, target);
+                    return typeof value === 'function' ? value.bind(target) : value;
+                }
+            })
+        });
+    });
+    await page.goto(`/room/${roomId}`);
+    await expect(page.locator('#status-message')).toContainText('não compartilhar a tela nesta sala');
+    await expect(page.locator('#share-btn')).toBeDisabled();
+    await page.getByRole('button', { name: 'Ajuda' }).click();
+    await expect(page.locator('#help-dialog')).toContainText('Um app nativo Guse seria necessário');
+    await expect(page.locator('#help-dialog')).toContainText('não aparece nesta sala');
+});
+
 test('theme toggle respects explicit user choice', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.goto(`/room/${roomId}`);
