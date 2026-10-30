@@ -5,7 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import cors from 'cors';
 import QRCode from 'qrcode';
-import { EmbedBuilder } from 'discord.js';
+import { EmbedBuilder, parseWebhookURL } from 'discord.js';
 import { env } from '../config/env';
 import { client } from '../bot/client';
 import { screenSessionStore } from '../bot/state/screenSessionStore';
@@ -194,16 +194,6 @@ app.post('/api/rooms/:roomId/invite', async (req, res) => {
     }
 
     try {
-        const channel = await client.channels.fetch(env.DISCORD_INVITE_CHANNEL_ID);
-        if (!channel || !channel.isTextBased() || !('guildId' in channel)) {
-            res.status(503).json({ error: 'O canal de convites não está disponível.' });
-            return;
-        }
-        if (channel.guildId !== room.guildId) {
-            res.status(403).json({ error: 'O canal de convites não pertence a este servidor.' });
-            return;
-        }
-
         const profile = await getDiscordProfile(session.userId);
         const inviteUrl = `${screenBaseUrl}/s/${encodeURIComponent(room.roomId)}`;
         const embed = new EmbedBuilder()
@@ -214,7 +204,31 @@ app.post('/api/rooms/:roomId/invite', async (req, res) => {
             .setFooter({ text: 'Guse Screen · Entre com sua conta Discord' })
             .setTimestamp();
 
-        await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+        if (env.DISCORD_INVITE_WEBHOOK_URL) {
+            const webhookData = parseWebhookURL(env.DISCORD_INVITE_WEBHOOK_URL);
+            if (!webhookData) {
+                res.status(503).json({ error: 'O webhook de convites não está configurado corretamente.' });
+                return;
+            }
+            const webhook = await client.fetchWebhook(webhookData.id, webhookData.token);
+            if (webhook.guildId !== room.guildId) {
+                res.status(403).json({ error: 'O webhook de convites não pertence a este servidor.' });
+                return;
+            }
+            await webhook.send({ embeds: [embed], allowedMentions: { parse: [] } });
+        } else {
+            const channel = await client.channels.fetch(env.DISCORD_INVITE_CHANNEL_ID);
+            if (!channel || !channel.isTextBased() || !('guildId' in channel)) {
+                res.status(503).json({ error: 'O canal de convites não está disponível.' });
+                return;
+            }
+            if (channel.guildId !== room.guildId) {
+                res.status(403).json({ error: 'O canal de convites não pertence a este servidor.' });
+                return;
+            }
+            await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+        }
+
         inviteCooldowns.set(cooldownKey, Date.now() + 30_000);
         res.json({ sent: true });
     } catch (error) {

@@ -8,14 +8,17 @@ process.env.SCREEN_DOMAIN = '';
 process.env.STUN_URLS = 'stun:stun.test.local:3478';
 process.env.TURN_URLS = 'turn:turn.test.local:3478?transport=udp';
 process.env.TURN_SHARED_SECRET = 'test-turn-shared-secret';
+const testWebhookToken = 't'.repeat(68);
+process.env.DISCORD_INVITE_WEBHOOK_URL = `https://discord.com/api/webhooks/123456789012345678/${testWebhookToken}`;
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { after, before, test } = require('node:test');
+const { after, before, mock, test } = require('node:test');
 const { io: createSocketClient } = require('socket.io-client');
 const { app, httpServer, io } = require('../dist/web/server');
 const { createSessionToken } = require('../dist/web/discordAuth');
 const { screenSessionStore } = require('../dist/bot/state/screenSessionStore');
+const { client } = require('../dist/bot/client');
 
 const roomId = '11111111-1111-4111-8111-111111111111';
 const ownerId = '123456789012345678';
@@ -152,6 +155,65 @@ test('Discord invite sending requires the room owner and a same-origin request',
     });
     assert.equal(botUnavailable.status, 503);
     assert.match((await botUnavailable.json()).error, /bot do Discord está offline/);
+});
+
+test('Discord invite uses the configured same-server webhook', async t => {
+    let sentPayload;
+    mock.method(client, 'isReady', () => true);
+    mock.method(client, 'fetchWebhook', async (id, token) => {
+        assert.equal(id, '123456789012345678');
+        assert.equal(token, testWebhookToken);
+        return {
+            guildId,
+            send: async payload => {
+                sentPayload = payload;
+            }
+        };
+    });
+    mock.method(client.users, 'fetch', async () => ({
+        globalName: 'Test User',
+        username: 'test-user',
+        displayAvatarURL: () => 'https://cdn.discordapp.com/avatars/test.png'
+    }));
+    t.after(() => mock.restoreAll());
+
+    const response = await fetch(`${baseUrl}/api/rooms/${roomId}/invite`, {
+        method: 'POST',
+        headers: {
+            Cookie: sessionCookie(ownerId),
+            Origin: process.env.PUBLIC_URL
+        }
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { sent: true });
+    assert.equal(sentPayload.allowedMentions.parse.length, 0);
+    assert.match(sentPayload.embeds[0].data.description, new RegExp(`/s/${roomId}`));
+});
+
+test('Discord invite rejects a webhook from another server', async t => {
+    const realDateNow = Date.now;
+    mock.method(Date, 'now', () => realDateNow() + 31_000);
+    mock.method(client, 'isReady', () => true);
+    mock.method(client, 'fetchWebhook', async () => ({
+        guildId: '876543210987654321',
+        send: async () => assert.fail('Must not send to a webhook in another server')
+    }));
+    mock.method(client.users, 'fetch', async () => ({
+        globalName: 'Test User',
+        username: 'test-user',
+        displayAvatarURL: () => 'https://cdn.discordapp.com/avatars/test.png'
+    }));
+    t.after(() => mock.restoreAll());
+
+    const response = await fetch(`${baseUrl}/api/rooms/${roomId}/invite`, {
+        method: 'POST',
+        headers: {
+            Cookie: sessionCookie(ownerId),
+            Origin: process.env.PUBLIC_URL
+        }
+    });
+    assert.equal(response.status, 403);
+    assert.match((await response.json()).error, /não pertence a este servidor/);
 });
 
 test('one-time access tickets are consumed and expire from reuse', async () => {
