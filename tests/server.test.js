@@ -150,7 +150,7 @@ test('Discord invite sending requires the room owner and a same-origin request',
         headers: { Cookie: sessionCookie(ownerId) }
     });
     assert.equal(originDenied.status, 403);
-    assert.match((await originDenied.json()).error, /Recarregue a sala/);
+    assert.match((await originDenied.json()).error, /confirmar que este pedido veio da sala/);
 
     const viewerDenied = await fetch(`${baseUrl}/api/rooms/${roomId}/invite`, {
         method: 'POST',
@@ -176,6 +176,49 @@ test('Discord invite sending requires the room owner and a same-origin request',
     });
     assert.equal(botUnavailable.status, 503);
     assert.match((await botUnavailable.json()).error, /bot do Discord está offline/);
+});
+
+test('Discord invite accepts same-origin requests when the browser omits Origin', async t => {
+    const configuredWebhook = env.DISCORD_INVITE_WEBHOOK_URL;
+    env.DISCORD_INVITE_WEBHOOK_URL = undefined;
+    t.after(() => {
+        env.DISCORD_INVITE_WEBHOOK_URL = configuredWebhook;
+    });
+
+    const response = await fetch(`${baseUrl}/api/rooms/${roomId}/invite`, {
+        method: 'POST',
+        headers: {
+            Cookie: sessionCookie(ownerId),
+            'X-Requested-With': 'fetch',
+            'Sec-Fetch-Site': 'same-origin',
+            Referer: `${process.env.PUBLIC_URL}/room/${roomId}`
+        }
+    });
+    const body = await response.json();
+    assert.equal(response.status, 503, JSON.stringify(body));
+    assert.match(body.error, /bot do Discord está offline/);
+});
+
+test('Discord invite accepts its trusted page origin when the proxy rewrites Origin', async t => {
+    const configuredWebhook = env.DISCORD_INVITE_WEBHOOK_URL;
+    env.DISCORD_INVITE_WEBHOOK_URL = undefined;
+    t.after(() => {
+        env.DISCORD_INVITE_WEBHOOK_URL = configuredWebhook;
+    });
+
+    const response = await fetch(`${baseUrl}/api/rooms/${roomId}/invite`, {
+        method: 'POST',
+        headers: {
+            Cookie: sessionCookie(ownerId),
+            Origin: 'https://proxy-internal.invalid',
+            'X-Requested-With': 'fetch',
+            'Sec-Fetch-Site': 'same-origin',
+            Referer: `${process.env.PUBLIC_URL}/room/${roomId}`
+        }
+    });
+    const body = await response.json();
+    assert.equal(response.status, 503, JSON.stringify(body));
+    assert.match(body.error, /bot do Discord está offline/);
 });
 
 test('Discord invite executes the configured webhook directly without bot permissions', async t => {

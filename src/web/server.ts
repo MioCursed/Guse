@@ -143,6 +143,29 @@ const allowedOrigins = [
     new URL(env.PUBLIC_URL).origin,
     ...(env.SCREEN_DOMAIN ? [new URL(env.SCREEN_DOMAIN).origin] : [])
 ];
+
+function isAllowedInviteRequest(req: express.Request): boolean {
+    const requestOrigin = req.get('origin');
+    if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
+        return true;
+    }
+
+    if (req.get('x-requested-with') !== 'fetch' || req.get('sec-fetch-site') !== 'same-origin') {
+        return false;
+    }
+
+    const referer = req.get('referer');
+    if (referer) {
+        try {
+            return allowedOrigins.includes(new URL(referer).origin);
+        } catch {
+            return false;
+        }
+    }
+
+    return allowedOrigins.some(origin => new URL(origin).host === req.get('host'));
+}
+
 export const io = new SocketIOServer(httpServer, {
     maxHttpBufferSize: 1e6,
     cors: {
@@ -205,8 +228,20 @@ app.get('/api/rooms/:roomId/session', async (req, res) => {
 });
 
 app.post('/api/rooms/:roomId/invite', async (req, res) => {
-    if (!allowedOrigins.includes(req.get('origin') ?? '')) {
-        res.status(403).json({ error: 'Esta página não tem permissão para enviar o convite. Recarregue a sala pelo link oficial.' });
+    if (!isAllowedInviteRequest(req)) {
+        let refererOrigin: string | undefined;
+        try {
+            refererOrigin = req.get('referer') ? new URL(req.get('referer')!).origin : undefined;
+        } catch {
+            refererOrigin = 'invalid';
+        }
+        console.warn('Rejected invite request origin', {
+            origin: req.get('origin') ?? 'missing',
+            fetchSite: req.get('sec-fetch-site') ?? 'missing',
+            host: req.get('host') ?? 'missing',
+            refererOrigin: refererOrigin ?? 'missing'
+        });
+        res.status(403).json({ error: 'Não foi possível confirmar que este pedido veio da sala aberta. Atualize a página e tente novamente.' });
         return;
     }
 
