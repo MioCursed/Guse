@@ -14,14 +14,14 @@ npm run deploy:commands
 npm start
 ```
 
-`SESSION_SECRET` deve ter pelo menos 32 caracteres aleatórios; gere um com `openssl rand -hex 32`. `DISCORD_CLIENT_SECRET` é opcional para o acesso por slash command e obrigatório apenas para login OAuth em links de convite. `DISCORD_INVITE_CHANNEL_ID` define o canal de texto no qual o bot publica convites quando não há webhook configurado; o valor padrão é `1484265142320365638`. Alternativamente, defina `DISCORD_INVITE_WEBHOOK_URL` no `.env` para enviar os embeds pelo webhook. O webhook deve pertencer ao mesmo servidor da sala. Trate essa URL como uma senha e revogue-a se for exposta. Cadastre no Discord Developer Portal a URL OAuth exata impressa como `Discord OAuth callback URL` se habilitar esse fluxo.
+`SESSION_SECRET` deve ter pelo menos 32 caracteres aleatórios; gere um com `openssl rand -hex 32`. `DISCORD_CLIENT_SECRET` é opcional para o acesso por slash command e obrigatório apenas para login OAuth em links de convite. `DISCORD_INVITE_CHANNEL_ID` define o canal de texto no qual o bot publica convites quando não há webhook configurado; o valor padrão é `1484265142320365638`. Alternativamente, defina `DISCORD_INVITE_WEBHOOK_URL` no `.env` para enviar os embeds ao canal vinculado àquele webhook. Webhooks são executados pela API oficial e não dependem das permissões do bot. Trate essa URL como uma senha e revogue-a se for exposta. Cadastre no Discord Developer Portal a URL OAuth exata impressa como `Discord OAuth callback URL` se habilitar esse fluxo.
 
 No Codespaces, configure `PUBLIC_URL` como o endereço HTTPS público da porta 3000 e marque a porta como **Public**. `SCREEN_DOMAIN`, quando definido, substitui `PUBLIC_URL` na criação dos links.
 
 ## Como funciona
 
 - **Autorização:** `/screen start` cria a sala e fornece ao criador um link de acesso privado, além do convite. `/screen join room_id` valida a pessoa pela interação autenticada no Discord e emite um ticket de uso único, válido por cinco minutos. O ticket abre a sala sem OAuth. Mantenha-o privado: até ser resgatado, ele funciona como um link bearer associado à identidade do usuário. `/screen end` encerra a sala. Convites comuns usam OAuth Discord e exigem participação no servidor.
-- **Participantes e convites:** cada conexão é associada à conta Discord verificada; a sala mostra nome, avatar e ID para distinguir contas. Enquanto o criador estiver transmitindo, **Convidar** publica um embed pelo webhook configurado ou, sem webhook, pelo bot no canal configurado. Só o criador pode usar esse botão, com limite de um envio a cada 30 segundos. O envio não marca pessoas no canal.
+- **Participantes e convites:** cada conexão é associada à conta Discord verificada; a sala mostra nome e avatar. Enquanto o criador estiver transmitindo, **Convidar** executa um POST à API oficial `POST /webhooks/{webhook.id}/{webhook.token}?wait=true` para publicar um embed no canal do webhook configurado, sem depender do bot ou de permissões de canal do bot. Sem webhook, usa o bot e o canal configurado. Só o criador pode usar esse botão, com limite de um envio a cada 30 segundos. O envio não marca pessoas no canal.
 - **Sinalização:** Socket.IO valida a sessão assinada, o servidor Discord da sala, o alvo dos eventos e os formatos/tamanhos dos sinais. O criador controla a configuração de proteção contra captura da sala.
 - **Mídia:** cada participante conecta diretamente aos transmissores por WebRTC; o servidor não retransmite vídeo. Isso reduz o custo de mídia no servidor, mas a malha P2P cresce em tráfego e CPU conforme o número de espectadores e transmissores. A aplicação não é um SFU e não promete escala para salas grandes.
 - **ICE:** `STUN_URLS` define os servidores STUN separados por vírgula. Para redes que bloqueiam conexões diretas, configure `TURN_URLS` e `TURN_SHARED_SECRET` para um servidor TURN com autenticação REST coturn compatível. O segredo permanece no servidor; a sala recebe credenciais HMAC temporárias de uma hora. Sem TURN, algumas combinações de NAT/firewall não conseguirão estabelecer mídia.
@@ -61,11 +61,11 @@ A janela flutuante tenta, em ordem: **Document Picture-in-Picture** para a sala;
 
 ## Segurança e limites de captura
 
-- **Web:** a proteção opcional por sala adiciona marca d'água identificadora dinâmica, desfoca os vídeos quando a aba perde foco e tenta bloquear menu de contexto/atalhos comuns. São camadas de **dissuasão**, não bloqueio. Uma pessoa ainda pode usar captura do sistema, gravador privilegiado, câmera externa, outro dispositivo ou alterações no navegador. Nem a página nem o bot podem impedir isso de forma absoluta.
+- **Web:** a proteção opcional por sala desfoca os vídeos quando a aba perde foco e tenta bloquear menu de contexto/atalhos comuns. Não há marca d'água com ID na tela. Essas camadas são de **dissuasão**, não bloqueio: uma pessoa ainda pode usar captura do sistema, gravador privilegiado, câmera externa, outro dispositivo ou alterações no navegador. Nem a página nem o bot podem impedir isso de forma absoluta.
 - **Android nativo:** um app próprio pode aplicar `WindowManager.LayoutParams.FLAG_SECURE` para impedir screenshots e exibição em certos destinos não seguros controlados pelo sistema. O Guse não inclui app Android; essa proteção não se aplica ao navegador nem ao app Discord.
 - **iOS nativo:** `UIScreen.isCaptured` e notificações do UIKit permitem detectar gravação/espelhamento; a notificação de screenshot ocorre depois da captura. Um app pode ocultar conteúdo ao detectar, mas isso não impede toda captura. O Guse não inclui app iOS/ReplayKit.
 - **DRM:** EME expõe uma API para reprodução de conteúdo criptografado; DRM requer vídeo, licença e sistema de chaves compatíveis. Não protege genericamente o vídeo WebRTC desta sala e não foi implementado.
-- **WebRTC:** mídia P2P usa criptografia de transporte definida pelo WebRTC, mas isso não impede um espectador autorizado de gravar o conteúdo que recebe. A marca d'água identifica/dissuade; não é controle de acesso.
+- **WebRTC:** mídia P2P usa criptografia de transporte definida pelo WebRTC, mas isso não impede um espectador autorizado de gravar o conteúdo que recebe. A autenticação controla o acesso à sala; ela não impede a captura pelo espectador autorizado.
 
 ## Matriz de compatibilidade e testes
 
@@ -100,7 +100,7 @@ Checklist manual pendente:
 4. PS4/PS5: testar PS Remote Play em janela e uma placa HDMI autorizada; anotar bloqueios HDCP sem tentar contorná-los.
 5. Switch: testar placa HDMI, seleção de dispositivo e áudio compatível.
 6. Rede: testar TURN real em NAT restritivo, perda/latência e queda durante vídeo; confirmar retomada/limites da malha.
-7. Segurança: testar watermark/blur/atalhos em cada sistema; confirmar em todos os casos que a interface comunica que captura externa continua possível.
+7. Segurança: testar blur/atalhos em cada sistema; confirmar em todos os casos que a interface comunica que captura externa continua possível.
 
 ## Referências consultadas
 
@@ -108,7 +108,7 @@ Fontes técnicas e de plataforma consultadas em 30/10/2026:
 
 - Captura: [MDN Screen Capture API](https://developer.mozilla.org/en-US/docs/Web/API/Screen_Capture_API), [W3C Screen Capture](https://www.w3.org/TR/screen-capture/) (Working Draft, não recomendação final), [Can I Use — getDisplayMedia](https://caniuse.com/mdn-api_mediadevices_getdisplaymedia).
 - WebRTC: [webrtc.org — peer connections](https://webrtc.org/getting-started/peer-connections), [web.dev — WebRTC basics](https://web.dev/articles/webrtc-basics).
-- Discord: [guia oficial de transmissão desktop/mobile](https://discord.com/blog/how-to-stream-to-discord-from-desktop-or-mobile), [Discord Developer Platform](https://docs.discord.com/developers/intro). A página do Help Center para Go Live retornou HTTP 403 na consulta; não foi usada como fonte única.
+- Discord: [guia oficial de transmissão desktop/mobile](https://discord.com/blog/how-to-stream-to-discord-from-desktop-or-mobile), [Discord Developer Platform](https://docs.discord.com/developers/intro), [Webhook Resource — Execute Webhook](https://docs.discord.com/developers/resources/webhook#execute-webhook). A execução oficial é um `POST` autenticado pela URL secreta do webhook e permite enviar `embeds`; `wait=true` solicita confirmação da mensagem. A página do Help Center para Go Live retornou HTTP 403 na consulta; não foi usada como fonte única.
 - Consoles: [Xbox Support — transmitir jogo ao Discord](https://support.xbox.com/en-US/help/friends-social-activity/share-socialize/stream-game-with-discord), [PlayStation — PS Remote Play](https://www.playstation.com/en-us/remote-play/). A URL de suporte PS4/PS5 inicialmente sugerida retornou 404; o portal oficial do produto permaneceu acessível.
 - Picture-in-Picture: [Chrome for Developers — Document PiP](https://developer.chrome.com/docs/web-platform/document-picture-in-picture), [MDN Document PiP](https://developer.mozilla.org/en-US/docs/Web/API/Document_Picture-in-Picture_API), [MDN video PiP](https://developer.mozilla.org/en-US/docs/Web/API/Picture-in-Picture_API).
 - Compatibilidade de APIs: [MDN Browser Compatibility Data — Document PiP](https://github.com/mdn/browser-compat-data/blob/main/api/DocumentPictureInPicture.json), [MDN `enumerateDevices()`](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/enumerateDevices), [MDN `getUserMedia()`](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia).

@@ -8,6 +8,7 @@ process.env.SCREEN_DOMAIN = '';
 process.env.STUN_URLS = 'stun:stun.l.google.com:19302';
 process.env.TURN_URLS = '';
 process.env.TURN_SHARED_SECRET = '';
+process.env.DISCORD_INVITE_WEBHOOK_URL = '';
 
 const { httpServer } = require('../dist/web/server');
 const { screenSessionStore } = require('../dist/bot/state/screenSessionStore');

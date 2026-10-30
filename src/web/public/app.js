@@ -29,7 +29,6 @@ let activeSharerIds = new Set();
 let participantIds = new Set();
 let participantProfiles = new Map();
 let viewerProfile = { userId: '', displayName: 'Você' };
-let viewerId = '';
 let mobilePipPlaceholder = null;
 let mobilePipCard = null;
 let pingMs;
@@ -51,7 +50,6 @@ const captureDeviceLabel = document.getElementById('capture-device-label');
 const detectCaptureButton = document.getElementById('detect-capture-btn');
 const protectionToggle = document.getElementById('protection-toggle');
 const protectionSetting = document.getElementById('protection-setting');
-const captureWatermark = document.getElementById('capture-watermark');
 const captureBlurNotice = document.getElementById('capture-blur-notice');
 const helpDialog = document.getElementById('help-dialog');
 const canShareScreen = window.isSecureContext && Boolean(navigator.mediaDevices?.getDisplayMedia);
@@ -346,7 +344,6 @@ async function loadRoomSession() {
             throw new Error(`Room session request failed with status ${response.status}`);
         }
         const data = await response.json();
-        viewerId = data.viewerId;
         viewerProfile = data.profile || { userId: data.viewerId, displayName: `Discord · ${data.viewerId}` };
         renderViewerList();
         captureProtectionEnabled = Boolean(data.captureProtectionEnabled);
@@ -354,7 +351,6 @@ async function loadRoomSession() {
         protectionSetting.hidden = !roomIsOwner;
         inviteBtn.hidden = true;
         protectionToggle.checked = captureProtectionEnabled;
-        updateWatermark();
         updateCaptureGuard();
     } catch (error) {
         console.error('Não foi possível carregar as informações da sala:', error);
@@ -827,7 +823,6 @@ function updateRoomUi() {
     participantCount.textContent = total === 1 ? 'Só você' : `${total} pessoas`;
     viewerTotal.textContent = String(total);
     inviteBtn.hidden = !roomIsOwner || !localSharer;
-    updateWatermark();
     audioBtn.disabled = activeSharerIds.size === 0;
     if (activeSharerIds.size === 0) {
         audioEnabled = false;
@@ -928,28 +923,9 @@ function updateCaptureGuard() {
     const blurred = captureProtectionEnabled && (document.hidden || !document.hasFocus());
     document.body.classList.toggle('capture-blurred', blurred);
     captureBlurNotice.hidden = !blurred;
-    updateWatermark();
     if (activePipWindow && !activePipWindow.closed) {
         activePipWindow.document.body.classList.toggle('pip-blurred', blurred);
     }
-}
-
-function updateWatermark() {
-    const videoCard = videoGrid.querySelector('.screen-card');
-    const videoBounds = videoCard?.getBoundingClientRect();
-    if (!viewerId || !captureProtectionEnabled || !activeSharerIds.size || !videoBounds?.width || !videoBounds.height) {
-        captureWatermark.hidden = true;
-        return;
-    }
-    captureWatermark.hidden = false;
-    captureWatermark.textContent = `Conta Discord · ${viewerId}`;
-    const width = Math.min(240, videoBounds.width - 16);
-    const height = 32;
-    const maxLeft = Math.max(videoBounds.left + 8, videoBounds.right - width - 8);
-    const maxTop = Math.max(videoBounds.top + 8, videoBounds.bottom - height - 8);
-    captureWatermark.style.maxWidth = `${Math.max(1, width)}px`;
-    captureWatermark.style.left = `${videoBounds.left + 8 + Math.random() * Math.max(0, maxLeft - videoBounds.left - 8)}px`;
-    captureWatermark.style.top = `${videoBounds.top + 8 + Math.random() * Math.max(0, maxTop - videoBounds.top - 8)}px`;
 }
 
 function startNetworkStats() {
@@ -958,7 +934,6 @@ function startNetworkStats() {
             socket.emit('latency-probe', performance.now());
         }
         updateWebRtcStats();
-        updateWatermark();
     }, 5000);
 }
 
@@ -1227,12 +1202,6 @@ function cloneScreenCard(card, targetDocument) {
     label.className = 'screen-label';
     label.textContent = card.querySelector('.screen-label')?.textContent || 'Transmissão';
     clone.append(video, label);
-    if (captureProtectionEnabled && viewerId) {
-        const watermark = targetDocument.createElement('span');
-        watermark.className = 'pip-watermark';
-        watermark.textContent = `Discord ID ${viewerId} · ${new Date().toLocaleTimeString()}`;
-        clone.append(watermark);
-    }
     video.play().catch(error => console.error('Não foi possível reproduzir a janela flutuante:', error));
     return clone;
 }

@@ -5,7 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import cors from 'cors';
 import QRCode from 'qrcode';
-import { EmbedBuilder, parseWebhookURL } from 'discord.js';
+import { EmbedBuilder } from 'discord.js';
 import { env } from '../config/env';
 import { client } from '../bot/client';
 import { screenSessionStore } from '../bot/state/screenSessionStore';
@@ -31,6 +31,41 @@ type DiscordProfile = { userId: string; displayName: string; avatarUrl?: string 
 const discordProfiles = new Map<string, Promise<DiscordProfile>>();
 const stunUrls = env.STUN_URLS.split(',').map(url => url.trim()).filter(Boolean);
 const turnUrls = env.TURN_URLS.split(',').map(url => url.trim()).filter(Boolean);
+
+async function sendWebhookInvite(webhookUrl: string, embed: EmbedBuilder) {
+    const url = new URL(webhookUrl);
+    url.searchParams.set('wait', 'true');
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            embeds: [embed.toJSON()],
+            allowed_mentions: { parse: [] }
+        }),
+        signal: AbortSignal.timeout(10_000)
+    });
+    if (response.ok) {
+        return;
+    }
+
+    let apiCode: number | undefined;
+    try {
+        const body: unknown = await response.json();
+        if (typeof body === 'object' && body !== null && 'code' in body && typeof body.code === 'number') {
+            apiCode = body.code;
+        }
+    } catch {
+        // Keep the response safe if Discord returns an empty or non-JSON error.
+    }
+    console.error(`Discord webhook rejected invite (HTTP ${response.status}${apiCode ? `, code ${apiCode}` : ''}).`);
+    if (response.status === 401 || response.status === 404) {
+        throw new Error('O webhook não existe mais ou a URL expirou. Crie um webhook novo no canal e atualize DISCORD_INVITE_WEBHOOK_URL.');
+    }
+    if (response.status === 429) {
+        throw new Error('O Discord limitou o envio. Aguarde alguns segundos e tente de novo.');
+    }
+    throw new Error(`O Discord recusou o convite (HTTP ${response.status}). Confira se o webhook ainda está ativo.`);
+}
 
 function getDiscordProfile(userId: string): Promise<DiscordProfile> {
     const cached = discordProfiles.get(userId);
@@ -185,12 +220,12 @@ app.post('/api/rooms/:roomId/invite', async (req, res) => {
         res.status(403).json({ error: 'Somente quem criou a sala pode enviar o convite.' });
         return;
     }
-    if (!client.isReady()) {
+    if (!env.DISCORD_INVITE_WEBHOOK_URL && !client.isReady()) {
         res.status(503).json({ error: 'O bot do Discord está offline no momento.' });
         return;
     }
 
-    const cooldownKey = `${room.roomId}:${session.userId}`;
+    const cooldownKey = session.userId;
     const nextAllowedAt = inviteCooldowns.get(cooldownKey) ?? 0;
     if (nextAllowedAt > Date.now()) {
         res.status(429).json({ error: 'Aguarde um pouco antes de enviar outro convite.' });
@@ -209,17 +244,7 @@ app.post('/api/rooms/:roomId/invite', async (req, res) => {
             .setTimestamp();
 
         if (env.DISCORD_INVITE_WEBHOOK_URL) {
-            const webhookData = parseWebhookURL(env.DISCORD_INVITE_WEBHOOK_URL);
-            if (!webhookData) {
-                res.status(503).json({ error: 'O webhook de convites não está configurado corretamente.' });
-                return;
-            }
-            const webhook = await client.fetchWebhook(webhookData.id, webhookData.token);
-            if (webhook.guildId !== room.guildId) {
-                res.status(403).json({ error: 'O webhook de convites não pertence a este servidor.' });
-                return;
-            }
-            await webhook.send({ embeds: [embed], allowedMentions: { parse: [] } });
+            await sendWebhookInvite(env.DISCORD_INVITE_WEBHOOK_URL, embed);
         } else {
             const channel = await client.channels.fetch(env.DISCORD_INVITE_CHANNEL_ID);
             if (!channel || !channel.isTextBased() || !('guildId' in channel)) {
@@ -236,8 +261,12 @@ app.post('/api/rooms/:roomId/invite', async (req, res) => {
         inviteCooldowns.set(cooldownKey, Date.now() + 30_000);
         res.json({ sent: true });
     } catch (error) {
-        console.error('Não foi possível enviar o convite para o Discord:', error);
-        res.status(502).json({ error: 'O bot não conseguiu enviar o convite. Confira se ele pode falar no canal.' });
+        console.error('Não foi possível enviar convite ao Discord:', error instanceof Error ? error.name : 'unknown error');
+        res.status(502).json({
+            error: error instanceof Error
+                ? error.message
+                : 'Não foi possível enviar o convite. Confira o webhook e tente novamente.'
+        });
     }
 });
 

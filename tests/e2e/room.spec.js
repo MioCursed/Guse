@@ -99,6 +99,7 @@ test('phone-sized floating player can be opened and closed in-page', async ({ pa
     await page.getByRole('button', { name: 'Flutuar' }).click();
     await expect(page.locator('#mobile-pip')).toBeVisible();
     await expect(page.locator('#mobile-pip')).toContainText('Aguardando alguém compartilhar');
+    await expect(page.locator('.capture-watermark, .pip-watermark')).toHaveCount(0);
     await page.getByRole('button', { name: 'Fechar janela flutuante' }).click();
     await expect(page.locator('#mobile-pip')).toBeHidden();
 });
@@ -164,6 +165,7 @@ test('capture-device controls start, pause, resume and stop a mock video stream'
     await expect(page.getByRole('button', { name: 'Enviar convite no Discord' })).toBeVisible();
     await page.getByRole('button', { name: 'Enviar convite no Discord' }).click();
     await expect(page.locator('#status-message')).toContainText('bot do Discord está offline');
+    await expect(page.locator('.capture-watermark, .pip-watermark')).toHaveCount(0);
     await expect(page.locator('#pause-share-btn')).toBeEnabled();
     await page.locator('#pause-share-btn').click();
     await expect(page.locator('#pause-share-btn')).toHaveText('Retomar');
