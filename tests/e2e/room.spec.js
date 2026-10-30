@@ -17,6 +17,30 @@ function createSessionToken() {
     return `${payload}.${signature}`;
 }
 
+test('home page presents the Guse brand and remains responsive', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: /Sua tela\.\s*Seu momento\./ })).toBeVisible();
+    await expect(page.getByRole('img', { name: /Ilustração de uma tela compartilhada/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Como funciona/ })).toHaveAttribute('href', '#como-funciona');
+    await expect(page.getByRole('heading', { name: 'Do convite à transmissão' })).toBeVisible();
+    for (const width of [320, 360, 390, 768, 1024, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        const sizes = await page.evaluate(() => ({
+            document: document.documentElement.scrollWidth,
+            viewport: window.innerWidth
+        }));
+        expect(sizes.document, `home page overflows horizontally at ${width}px`).toBeLessThanOrEqual(sizes.viewport);
+    }
+});
+
+test('home page has no axe WCAG 2.2 AA violations', async ({ page }) => {
+    await page.goto('/');
+    const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+        .analyze();
+    expect(results.violations).toEqual([]);
+});
+
 test.beforeEach(async ({ context }) => {
     await context.addCookies([{
         name: 'guse_session',
@@ -108,7 +132,7 @@ test('leave button returns to the public home page', async ({ page }) => {
     await page.goto(`/room/${roomId}`);
     await page.getByRole('button', { name: 'Sair da sala' }).click();
     await expect(page).toHaveURL('/');
-    await expect(page.getByRole('heading', { name: 'Sua tela, na conversa.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Sua tela\.\s*Seu momento\./ })).toBeVisible();
 });
 
 test('capture-device controls start, pause, resume and stop a mock video stream', async ({ page }) => {

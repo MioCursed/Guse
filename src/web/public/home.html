@@ -3,53 +3,82 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#313338">
+    <meta name="theme-color" content="#101519">
     <meta name="description" content="Uma sala privada para assistir e compartilhar telas com amigos.">
     <title>Guse Screen — sua tela, na conversa</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body class="guide-page home-page">
     <header class="topbar">
-        <a class="brand" href="/" aria-label="Guse Screen">
-            <span class="brand-mark" aria-hidden="true">G</span>
+        <a class="brand" href="/">
+            <span class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 8.5 12h-2.7a6.5 6.5 0 1 1-1.6-7.1l1.9-1.9A8.97 8.97 0 0 0 12 3Zm-1.2 7.1v2.7h5.1A4.2 4.2 0 1 1 12 8.3c.8 0 1.6.2 2.2.6l1.9-1.9A6.7 6.7 0 1 0 18.6 13h-7.8v-2.9Z"/></svg>
+            </span>
             <span>Guse <span class="brand-light">Screen</span></span>
         </a>
-        <div class="topbar-actions"><span class="room-indicator">Sua sala começa no Discord</span></div>
+        <div class="topbar-actions"><span class="home-top-note"><span class="home-status-dot"></span> Uma sala privada para estar junto</span></div>
     </header>
     <main class="guide-main">
         <section class="guide-hero home-hero">
-            <p class="eyebrow">ASSISTA JUNTO</p>
-            <h1>Sua tela,<br>na conversa.</h1>
-            <p>Crie uma sala pelo Discord, compartilhe um convite e escolha o que mostrar. A transmissão começa somente depois da sua autorização no dispositivo.</p>
-            <div class="component-samples">
-                <span class="primary-button">No Discord: <code>/screen start</code></span>
-                <p>Depois de entrar, toque em <strong>?</strong> para ver dicas no próprio app.</p>
+            <div class="hero-copy">
+                <p class="eyebrow"><span class="hero-spark" aria-hidden="true">✦</span> ASSISTA JUNTO, DE ONDE ESTIVER</p>
+                <h1>Sua tela.<br><span>Seu momento.</span></h1>
+                <p class="hero-description">Abra uma sala, chame quem você gosta e compartilhe o que está vendo. Simples assim — você escolhe quando começar.</p>
+                <div class="hero-actions">
+                    <span class="start-command"><span class="command-mark" aria-hidden="true">/</span><span><small>Comece pelo Discord</small><code>/screen start</code></span></span>
+                    <a class="help-pill" href="#como-funciona"><span aria-hidden="true">↓</span> Como funciona</a>
+                </div>
+                <div class="hero-trust"><span class="trust-icon" aria-hidden="true">✓</span> Nada é transmitido sem a sua autorização</div>
+            </div>
+            <div class="hero-art" role="img" aria-label="Ilustração de uma tela compartilhada com pessoas assistindo juntas">
+                <div class="art-glow art-glow-one"></div>
+                <div class="art-glow art-glow-two"></div>
+                <div class="art-orbit art-orbit-one"></div>
+                <div class="art-orbit art-orbit-two"></div>
+                <div class="art-screen">
+                    <div class="art-screen-top"><span></span><span></span><span></span><i>ao vivo</i></div>
+                    <div class="art-screen-image">
+                        <div class="art-sun"></div><div class="art-mountain art-mountain-back"></div><div class="art-mountain art-mountain-front"></div>
+                        <div class="art-play"><span></span></div>
+                    </div>
+                    <div class="art-screen-bottom"><span class="art-track"></span><span class="art-time">12:48</span></div>
+                </div>
+                <div class="art-float art-float-people"><span class="art-avatar art-avatar-mint">M</span><span class="art-avatar art-avatar-orange">L</span><span class="art-avatar art-avatar-lilac">A</span><span class="art-people-label">juntos na sala</span></div>
+                <div class="art-float art-float-sound" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                <span class="art-star art-star-one" aria-hidden="true">✳</span><span class="art-star art-star-two" aria-hidden="true">✦</span>
             </div>
         </section>
-        <div class="guide-grid">
+        <section id="como-funciona" class="home-features" aria-labelledby="features-title">
+            <div class="section-heading">
+                <div><p class="guide-kicker">SEM COMPLICAÇÃO</p><h2 id="features-title">Do convite à transmissão</h2></div>
+                <p>Três passos para assistir em boa companhia.</p>
+            </div>
+            <div class="guide-grid">
             <article class="guide-card">
-                <p class="guide-kicker">1 · CRIE</p>
+                <span class="feature-number">01</span>
+                <span class="feature-icon feature-icon-mint" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v6a2.5 2.5 0 0 1-2.5 2.5H13l-4 3v-3h-1.5A2.5 2.5 0 0 1 5 13.5v-6Z"/></svg></span>
+                <p class="guide-kicker">PRIMEIRO</p>
                 <h2>Inicie pelo Discord</h2>
                 <p>Use <code>/screen start</code> num servidor. O bot confirma sua identidade e envia o link de acesso em uma resposta privada.</p>
             </article>
             <article class="guide-card">
-                <p class="guide-kicker">2 · CONVIDE</p>
+                <span class="feature-number">02</span>
+                <span class="feature-icon feature-icon-orange" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5h5v5m-.5-4.5-7 7M10 7H6.5A1.5 1.5 0 0 0 5 8.5v9A1.5 1.5 0 0 0 6.5 19h9a1.5 1.5 0 0 0 1.5-1.5V14"/></svg></span>
+                <p class="guide-kicker">DEPOIS</p>
                 <h2>Compartilhe o link</h2>
                 <p>Convidados podem usar o convite OAuth ou executar <code>/screen join room_id</code> no mesmo servidor Discord.</p>
             </article>
             <article class="guide-card">
-                <p class="guide-kicker">3 · ESCOLHA</p>
+                <span class="feature-number">03</span>
+                <span class="feature-icon feature-icon-lilac" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="12" rx="2"/><path d="M9 21h6m-3-4v4m-3-9 2-2 2 2m-2-2v5"/></svg></span>
+                <p class="guide-kicker">NA HORA</p>
                 <h2>Você controla a captura</h2>
                 <p>Você escolhe o que compartilhar e confirma no seu aparelho. No celular, use o app Discord para mostrar a tela inteira.</p>
             </article>
-        </div>
-        <section class="guide-card">
-            <p class="guide-kicker">TRANSPARÊNCIA</p>
-            <h2>Compartilhe com cuidado</h2>
-            <p>O desfoque ao sair da aba ajuda a desencorajar capturas, mas não impede screenshots do sistema, gravações ou fotos externas.</p>
-            <p>As instruções de cada aparelho e os limites de privacidade ficam na ajuda <strong>?</strong> dentro da sala.</p>
+            </div>
         </section>
+        <section class="home-note"><span class="note-icon" aria-hidden="true">i</span><p><strong>Você no controle.</strong> A tela só começa a ser compartilhada depois que você confirma no seu aparelho. As dicas para cada dispositivo ficam na ajuda <strong>?</strong> dentro da sala.</p></section>
     </main>
-    <footer class="guide-footer">Guse Screen · O bot não vê nem grava sua tela. Você escolhe o que compartilhar.</footer>
+    <footer class="guide-footer"><span class="footer-brand"><span class="footer-mark">G</span> Guse Screen</span><span>Feito para curtir junto. Você escolhe o que compartilhar.</span></footer>
 </body>
 </html>
